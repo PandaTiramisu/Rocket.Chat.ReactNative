@@ -1,106 +1,110 @@
 import React from 'react';
+import { Text, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-navigation';
 import PropTypes from 'prop-types';
-import { Text, View, SafeAreaView, ScrollView } from 'react-native';
-import { connect } from 'react-redux';
 
-import LoggedView from './View';
-import { forgotPasswordInit, forgotPasswordRequest } from '../actions/login';
 import KeyboardView from '../presentation/KeyboardView';
 import TextInput from '../containers/TextInput';
 import Button from '../containers/Button';
-import Loading from '../containers/Loading';
-import styles from './Styles';
+import sharedStyles from './Styles';
 import { showErrorAlert } from '../utils/info';
+import isValidEmail from '../utils/isValidEmail';
 import scrollPersistTaps from '../utils/scrollPersistTaps';
 import I18n from '../i18n';
+import RocketChat from '../lib/rocketchat';
+import StatusBar from '../containers/StatusBar';
 
-@connect(state => ({
-	login: state.login
-}), dispatch => ({
-	forgotPasswordInit: () => dispatch(forgotPasswordInit()),
-	forgotPasswordRequest: email => dispatch(forgotPasswordRequest(email))
-}))
-export default class ForgotPasswordView extends LoggedView {
-	static propTypes = {
-		forgotPasswordInit: PropTypes.func.isRequired,
-		forgotPasswordRequest: PropTypes.func.isRequired,
-		login: PropTypes.object,
-		navigation: PropTypes.object.isRequired
-	}
-
-	constructor(props) {
-		super('ForgotPasswordView', props);
-
-		this.state = {
-			email: '',
-			invalidEmail: false
+export default class ForgotPasswordView extends React.Component {
+	static navigationOptions = ({ navigation }) => {
+		const title = navigation.getParam('title', 'Rocket.Chat');
+		return {
+			title
 		};
 	}
 
-	componentDidMount() {
-		this.props.forgotPasswordInit();
+	static propTypes = {
+		navigation: PropTypes.object
 	}
 
-	componentDidUpdate() {
-		const { login } = this.props;
-		if (login.success) {
-			this.props.navigation.goBack();
-			setTimeout(() => {
-				showErrorAlert(I18n.t('Forgot_password_If_this_email_is_registered'), I18n.t('Alert'));
-			});
+	state = {
+		email: '',
+		invalidEmail: true,
+		isFetching: false
+	}
+
+	shouldComponentUpdate(nextProps, nextState) {
+		const { email, invalidEmail, isFetching } = this.state;
+		if (nextState.email !== email) {
+			return true;
 		}
+		if (nextState.invalidEmail !== invalidEmail) {
+			return true;
+		}
+		if (nextState.isFetching !== isFetching) {
+			return true;
+		}
+		return false;
 	}
 
 	validate = (email) => {
-		/* eslint-disable no-useless-escape */
-		const reg = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
-		if (!reg.test(email)) {
+		if (!isValidEmail(email)) {
 			this.setState({ invalidEmail: true });
 			return;
 		}
 		this.setState({ email, invalidEmail: false });
 	}
 
-	resetPassword = () => {
+	resetPassword = async() => {
 		const { email, invalidEmail } = this.state;
 		if (invalidEmail || !email) {
 			return;
 		}
-		this.props.forgotPasswordRequest(email);
+		try {
+			this.setState({ isFetching: true });
+			const result = await RocketChat.forgotPassword(email);
+			if (result.success) {
+				const { navigation } = this.props;
+				navigation.pop();
+				showErrorAlert(I18n.t('Forgot_password_If_this_email_is_registered'), I18n.t('Alert'));
+			}
+		} catch (e) {
+			const msg = (e.data && e.data.error) || I18n.t('There_was_an_error_while_action', I18n.t('resetting_password'));
+			showErrorAlert(msg, I18n.t('Alert'));
+		}
+		this.setState({ isFetching: false });
 	}
 
 	render() {
+		const { invalidEmail, isFetching } = this.state;
+
 		return (
 			<KeyboardView
-				contentContainerStyle={styles.container}
+				contentContainerStyle={sharedStyles.container}
 				keyboardVerticalOffset={128}
 			>
-				<ScrollView {...scrollPersistTaps} contentContainerStyle={styles.containerScrollView}>
-					<SafeAreaView testID='forgot-password-view'>
-						<View style={styles.loginView}>
-							<TextInput
-								inputStyle={this.state.invalidEmail ? { borderColor: 'red' } : {}}
-								label={I18n.t('Email')}
-								placeholder={I18n.t('Email')}
-								keyboardType='email-address'
-								returnKeyType='next'
-								onChangeText={email => this.validate(email)}
-								onSubmitEditing={() => this.resetPassword()}
-								testID='forgot-password-view-email'
-							/>
-
-							<View style={styles.alignItemsFlexStart}>
-								<Button
-									title={I18n.t('Reset_password')}
-									type='primary'
-									onPress={this.resetPassword}
-									testID='forgot-password-view-submit'
-								/>
-							</View>
-
-							{this.props.login.failure ? <Text style={styles.error}>{this.props.login.error.reason}</Text> : null}
-							<Loading visible={this.props.login.isFetching} />
-						</View>
+				<StatusBar />
+				<ScrollView {...scrollPersistTaps} contentContainerStyle={sharedStyles.containerScrollView}>
+					<SafeAreaView style={sharedStyles.container} testID='forgot-password-view' forceInset={{ vertical: 'never' }}>
+						<Text style={[sharedStyles.loginTitle, sharedStyles.textBold]}>{I18n.t('Forgot_password')}</Text>
+						<TextInput
+							autoFocus
+							placeholder={I18n.t('Email')}
+							keyboardType='email-address'
+							iconLeft='mail'
+							returnKeyType='send'
+							onChangeText={email => this.validate(email)}
+							onSubmitEditing={this.resetPassword}
+							testID='forgot-password-view-email'
+							containerStyle={sharedStyles.inputLastChild}
+						/>
+						<Button
+							title={I18n.t('Reset_password')}
+							type='primary'
+							onPress={this.resetPassword}
+							testID='forgot-password-view-submit'
+							loading={isFetching}
+							disabled={invalidEmail}
+						/>
 					</SafeAreaView>
 				</ScrollView>
 			</KeyboardView>

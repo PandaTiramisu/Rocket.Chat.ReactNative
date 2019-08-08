@@ -1,145 +1,282 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Keyboard, Text, ScrollView, SafeAreaView, View } from 'react-native';
+import {
+	Keyboard, Text, ScrollView, View, StyleSheet, Alert, LayoutAnimation
+} from 'react-native';
 import { connect } from 'react-redux';
-import { Answers } from 'react-native-fabric';
+import { SafeAreaView } from 'react-navigation';
+import equal from 'deep-equal';
+import firebase from 'react-native-firebase';
 
-import RocketChat from '../lib/rocketchat';
 import KeyboardView from '../presentation/KeyboardView';
 import TextInput from '../containers/TextInput';
-import CloseModalButton from '../containers/CloseModalButton';
 import Button from '../containers/Button';
-import Loading from '../containers/Loading';
-import styles from './Styles';
+import sharedStyles from './Styles';
 import scrollPersistTaps from '../utils/scrollPersistTaps';
-import { showToast } from '../utils/info';
-import { COLOR_BUTTON_PRIMARY } from '../constants/colors';
-import LoggedView from './View';
 import I18n from '../i18n';
+import { loginRequest as loginRequestAction } from '../actions/login';
+import { LegalButton } from '../containers/HeaderButton';
+import StatusBar from '../containers/StatusBar';
+import { COLOR_PRIMARY } from '../constants/colors';
 
-@connect(state => ({
-	server: state.server.server,
-	failure: state.login.failure,
-	isFetching: state.login.isFetching,
-	reason: state.login.error && state.login.error.reason,
-	error: state.login.error && state.login.error.error
-}), () => ({
-	loginSubmit: params => RocketChat.loginWithPassword(params)
-}))
-export default class LoginView extends LoggedView {
-	static propTypes = {
-		loginSubmit: PropTypes.func.isRequired,
-		navigation: PropTypes.object.isRequired,
-		login: PropTypes.object,
-		server: PropTypes.string
+const styles = StyleSheet.create({
+	bottomContainer: {
+		flexDirection: 'column',
+		alignItems: 'center',
+		marginTop: 10
+	},
+	dontHaveAccount: {
+		...sharedStyles.textRegular,
+		...sharedStyles.textColorDescription,
+		fontSize: 13
+	},
+	createAccount: {
+		...sharedStyles.textSemibold,
+		color: COLOR_PRIMARY,
+		fontSize: 13
+	},
+	loginTitle: {
+		marginVertical: 0,
+		marginTop: 15
 	}
+});
 
-	constructor(props) {
-		super('LoginView', props);
-		this.state = {
-			username: '',
-			password: ''
+class LoginView extends React.Component {
+	static navigationOptions = ({ navigation }) => {
+		const title = navigation.getParam('title', 'Rocket.Chat');
+		return {
+			title,
+			headerRight: <LegalButton navigation={navigation} testID='login-view-more' />
 		};
 	}
 
-	submit = async() => {
-		const {	username, password, code } = this.state;
-		if (username.trim() === '' || password.trim() === '') {
-			showToast(I18n.t('Email_or_password_field_is_empty'));
+	static propTypes = {
+		navigation: PropTypes.object,
+		loginRequest: PropTypes.func.isRequired,
+		error: PropTypes.object,
+		Site_Name: PropTypes.string,
+		Accounts_EmailOrUsernamePlaceholder: PropTypes.string,
+		Accounts_PasswordPlaceholder: PropTypes.string,
+		isFetching: PropTypes.bool,
+		failure: PropTypes.bool
+	}
+
+	constructor(props) {
+		super(props);
+		this.state = {
+			user: '',
+			password: '',
+			code: '',
+			showTOTP: false
+		};
+		const { Site_Name } = this.props;
+		this.setTitle(Site_Name);
+	}
+
+	componentWillReceiveProps(nextProps) {
+		const { Site_Name, error } = this.props;
+		if (nextProps.Site_Name && nextProps.Site_Name !== Site_Name) {
+			this.setTitle(nextProps.Site_Name);
+		} else if (nextProps.failure && !equal(error, nextProps.error)) {
+			if (nextProps.error && nextProps.error.error === 'totp-required') {
+				LayoutAnimation.easeInEaseOut();
+				this.setState({ showTOTP: true });
+				return;
+			}
+			Alert.alert(I18n.t('Oops'), I18n.t('Login_error'));
+		}
+	}
+
+	shouldComponentUpdate(nextProps, nextState) {
+		const {
+			user, password, code, showTOTP
+		} = this.state;
+		const {
+			isFetching, failure, error, Site_Name, Accounts_EmailOrUsernamePlaceholder, Accounts_PasswordPlaceholder
+		} = this.props;
+		if (nextState.user !== user) {
+			return true;
+		}
+		if (nextState.password !== password) {
+			return true;
+		}
+		if (nextState.code !== code) {
+			return true;
+		}
+		if (nextState.showTOTP !== showTOTP) {
+			return true;
+		}
+		if (nextProps.isFetching !== isFetching) {
+			return true;
+		}
+		if (nextProps.failure !== failure) {
+			return true;
+		}
+		if (nextProps.Site_Name !== Site_Name) {
+			return true;
+		}
+		if (nextProps.Accounts_EmailOrUsernamePlaceholder !== Accounts_EmailOrUsernamePlaceholder) {
+			return true;
+		}
+		if (nextProps.Accounts_PasswordPlaceholder !== Accounts_PasswordPlaceholder) {
+			return true;
+		}
+		if (!equal(nextProps.error, error)) {
+			return true;
+		}
+		return false;
+	}
+
+	setTitle = (title) => {
+		const { navigation } = this.props;
+		navigation.setParams({ title });
+	}
+
+	valid = () => {
+		const {
+			user, password, code, showTOTP
+		} = this.state;
+		if (showTOTP) {
+			return code.trim();
+		}
+		return user.trim() && password.trim();
+	}
+
+	submit = () => {
+		if (!this.valid()) {
 			return;
 		}
-		Keyboard.dismiss();
 
-		try {
-			await this.props.loginSubmit({ username, password, code });
-			Answers.logLogin('Email', true, { server: this.props.server });
-		} catch (error) {
-			console.warn('LoginView submit', error);
-		}
+		const { user, password, code } = this.state;
+		const { loginRequest } = this.props;
+		Keyboard.dismiss();
+		loginRequest({ user, password, code });
+		firebase.analytics().logEvent('login');
+	}
+
+	register = () => {
+		const { navigation, Site_Name } = this.props;
+		navigation.navigate('RegisterView', { title: Site_Name });
+	}
+
+	forgotPassword = () => {
+		const { navigation, Site_Name } = this.props;
+		navigation.navigate('ForgotPasswordView', { title: Site_Name });
 	}
 
 	renderTOTP = () => {
-		if (/totp/ig.test(this.props.error)) {
-			return (
+		const { isFetching } = this.props;
+		return (
+			<SafeAreaView style={sharedStyles.container} testID='login-view' forceInset={{ vertical: 'never' }}>
+				<Text style={[sharedStyles.loginTitle, sharedStyles.textBold, styles.loginTitle]}>{I18n.t('Two_Factor_Authentication')}</Text>
+				<Text style={[sharedStyles.loginSubtitle, sharedStyles.textRegular]}>{I18n.t('Whats_your_2fa')}</Text>
 				<TextInput
 					inputRef={ref => this.codeInput = ref}
-					label={I18n.t('Code')}
-					onChangeText={code => this.setState({ code })}
-					placeholder={I18n.t('Code')}
+					autoFocus
+					onChangeText={value => this.setState({ code: value })}
 					keyboardType='numeric'
-					returnKeyType='done'
+					returnKeyType='send'
 					autoCapitalize='none'
 					onSubmitEditing={this.submit}
+					testID='login-view-totp'
+					containerStyle={sharedStyles.inputLastChild}
 				/>
-			);
-		}
-		return null;
+				<Button
+					title={I18n.t('Confirm')}
+					type='primary'
+					onPress={this.submit}
+					testID='login-view-submit'
+					loading={isFetching}
+					disabled={!this.valid()}
+				/>
+			</SafeAreaView>
+		);
+	}
+
+	renderUserForm = () => {
+		const {
+			Accounts_EmailOrUsernamePlaceholder, Accounts_PasswordPlaceholder, isFetching
+		} = this.props;
+		return (
+			<SafeAreaView style={sharedStyles.container} testID='login-view' forceInset={{ vertical: 'never' }}>
+				<Text style={[sharedStyles.loginTitle, sharedStyles.textBold]}>{I18n.t('Login')}</Text>
+				<TextInput
+					autoFocus
+					placeholder={Accounts_EmailOrUsernamePlaceholder || I18n.t('Username_or_email')}
+					keyboardType='email-address'
+					returnKeyType='next'
+					iconLeft='at'
+					onChangeText={value => this.setState({ user: value })}
+					onSubmitEditing={() => { this.passwordInput.focus(); }}
+					testID='login-view-email'
+				/>
+				<TextInput
+					inputRef={(e) => { this.passwordInput = e; }}
+					placeholder={Accounts_PasswordPlaceholder || I18n.t('Password')}
+					returnKeyType='send'
+					iconLeft='key'
+					secureTextEntry
+					onSubmitEditing={this.submit}
+					onChangeText={value => this.setState({ password: value })}
+					testID='login-view-password'
+					containerStyle={sharedStyles.inputLastChild}
+				/>
+				<Button
+					title={I18n.t('Login')}
+					type='primary'
+					onPress={this.submit}
+					testID='login-view-submit'
+					loading={isFetching}
+					disabled={!this.valid()}
+				/>
+				<Button
+					title={I18n.t('Forgot_password')}
+					type='secondary'
+					onPress={this.forgotPassword}
+					testID='login-view-forgot-password'
+				/>
+				<View style={styles.bottomContainer}>
+					<Text style={styles.dontHaveAccount}>{I18n.t('Dont_Have_An_Account')}</Text>
+					<Text
+						style={styles.createAccount}
+						onPress={this.register}
+						testID='login-view-register'
+					>{I18n.t('Create_account')}
+					</Text>
+				</View>
+			</SafeAreaView>
+		);
 	}
 
 	render() {
+		const { showTOTP } = this.state;
 		return (
 			<KeyboardView
-				contentContainerStyle={styles.container}
+				contentContainerStyle={sharedStyles.container}
 				keyboardVerticalOffset={128}
 				key='login-view'
 			>
-				<ScrollView {...scrollPersistTaps} contentContainerStyle={styles.containerScrollView}>
-					<SafeAreaView testID='login-view'>
-						<CloseModalButton navigation={this.props.navigation} />
-						<Text style={[styles.loginText, styles.loginTitle]}>Login</Text>
-						<TextInput
-							label={I18n.t('Username')}
-							placeholder={this.props.Accounts_EmailOrUsernamePlaceholder || I18n.t('Username')}
-							keyboardType='email-address'
-							returnKeyType='next'
-							iconLeft='at'
-							onChangeText={username => this.setState({ username })}
-							onSubmitEditing={() => { this.password.focus(); }}
-							testID='login-view-email'
-						/>
-
-						<TextInput
-							inputRef={(e) => { this.password = e; }}
-							label={I18n.t('Password')}
-							placeholder={this.props.Accounts_PasswordPlaceholder || I18n.t('Password')}
-							returnKeyType='done'
-							iconLeft='key-variant'
-							secureTextEntry
-							onSubmitEditing={this.submit}
-							onChangeText={password => this.setState({ password })}
-							testID='login-view-password'
-						/>
-
-						{this.renderTOTP()}
-
-						<View style={styles.alignItemsFlexStart}>
-							<Button
-								title={I18n.t('Login')}
-								type='primary'
-								onPress={this.submit}
-								testID='login-view-submit'
-							/>
-							<Text
-								style={[styles.loginText, { marginTop: 10 }]}
-								testID='login-view-register'
-								onPress={() => this.props.navigation.navigate('Register')}
-							>{I18n.t('New_in_RocketChat_question_mark')} &nbsp;
-								<Text style={{ color: COLOR_BUTTON_PRIMARY }}>{I18n.t('Sign_Up')}
-								</Text>
-							</Text>
-							<Text
-								style={[styles.loginText, { marginTop: 20, fontSize: 13 }]}
-								onPress={() => this.props.navigation.navigate('ForgotPassword')}
-								testID='login-view-forgot-password'
-							>{I18n.t('Forgot_password')}
-							</Text>
-						</View>
-
-						{this.props.failure ? <Text style={styles.error}>{this.props.reason}</Text> : null}
-						<Loading visible={this.props.isFetching} />
-					</SafeAreaView>
+				<StatusBar />
+				<ScrollView {...scrollPersistTaps} contentContainerStyle={sharedStyles.containerScrollView}>
+					{!showTOTP ? this.renderUserForm() : null}
+					{showTOTP ? this.renderTOTP() : null}
 				</ScrollView>
 			</KeyboardView>
 		);
 	}
 }
+
+const mapStateToProps = state => ({
+	isFetching: state.login.isFetching,
+	failure: state.login.failure,
+	error: state.login.error && state.login.error.data,
+	Site_Name: state.settings.Site_Name,
+	Accounts_EmailOrUsernamePlaceholder: state.settings.Accounts_EmailOrUsernamePlaceholder,
+	Accounts_PasswordPlaceholder: state.settings.Accounts_PasswordPlaceholder
+});
+
+const mapDispatchToProps = dispatch => ({
+	loginRequest: params => dispatch(loginRequestAction(params))
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(LoginView);

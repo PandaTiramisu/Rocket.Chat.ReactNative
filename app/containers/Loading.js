@@ -1,6 +1,8 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { StyleSheet, View, Modal, Animated } from 'react-native';
+import {
+	StyleSheet, View, Modal, Animated
+} from 'react-native';
 
 const styles = StyleSheet.create({
 	container: {
@@ -27,8 +29,11 @@ export default class Loading extends React.PureComponent {
 	}
 
 	componentDidMount() {
+		const { opacity, scale } = this.state;
+		const { visible } = this.props;
+
 		this.opacityAnimation = Animated.timing(
-			this.state.opacity,
+			opacity,
 			{
 				toValue: 1,
 				duration: 1000,
@@ -37,7 +42,7 @@ export default class Loading extends React.PureComponent {
 		);
 		this.scaleAnimation = Animated.loop(Animated.sequence([
 			Animated.timing(
-				this.state.scale,
+				scale,
 				{
 					toValue: 0,
 					duration: 1000,
@@ -45,7 +50,7 @@ export default class Loading extends React.PureComponent {
 				}
 			),
 			Animated.timing(
-				this.state.scale,
+				scale,
 				{
 					toValue: 1,
 					duration: 1000,
@@ -54,35 +59,47 @@ export default class Loading extends React.PureComponent {
 			)
 		]));
 
-		if (this.props.visible) {
+		if (visible) {
 			this.startAnimations();
 		}
 	}
 
 	componentDidUpdate(prevProps) {
-		if (this.props.visible && this.props.visible !== prevProps.visible) {
+		const { visible } = this.props;
+		if (visible && visible !== prevProps.visible) {
 			this.startAnimations();
 		}
 	}
 
 	componentWillUnmount() {
-		this.opacityAnimation.stop();
-		this.scaleAnimation.stop();
+		if (this.opacityAnimation && this.opacityAnimation.stop) {
+			this.opacityAnimation.stop();
+		}
+		if (this.scaleAnimation && this.scaleAnimation.stop) {
+			this.scaleAnimation.stop();
+		}
 	}
 
 	startAnimations() {
-		this.opacityAnimation.start();
-		this.scaleAnimation.start();
+		if (this.opacityAnimation && this.opacityAnimation.start) {
+			this.opacityAnimation.start();
+		}
+		if (this.scaleAnimation && this.scaleAnimation.start) {
+			this.scaleAnimation.start();
+		}
 	}
 
 	render() {
-		const scale = this.state.scale.interpolate({
+		const { opacity, scale } = this.state;
+		const { visible } = this.props;
+
+		const scaleAnimation = scale.interpolate({
 			inputRange: [0, 0.5, 1],
 			outputRange: [1, 1.1, 1]
 		});
 		return (
 			<Modal
-				visible={this.props.visible}
+				visible={visible}
 				transparent
 				onRequestClose={() => {}}
 			>
@@ -90,9 +107,9 @@ export default class Loading extends React.PureComponent {
 					<Animated.Image
 						source={require('../static/images/logo.png')}
 						style={[styles.image, {
-							opacity: this.state.opacity,
+							opacity,
 							transform: [{
-								scale
+								scale: scaleAnimation
 							}]
 						}]}
 					/>

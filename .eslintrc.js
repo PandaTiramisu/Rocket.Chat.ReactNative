@@ -13,7 +13,8 @@ module.exports = {
 		"ecmaVersion": 2017,
 		"ecmaFeatures": {
 			"experimentalObjectRestSpread" : true,
-			"jsx": true
+			"jsx": true,
+			"legacyDecorators": true
 		}
 	},
 	"plugins": [
@@ -45,6 +46,7 @@ module.exports = {
 		"jsx-quotes": [2, "prefer-single"],
 		"jsx-a11y/href-no-hash": 0,
 		"import/prefer-default-export": 0,
+		"import/no-cycle": 0,
 		"camelcase": 0,
 		"no-underscore-dangle": 0,
 		"no-return-assign": 0,
@@ -65,6 +67,7 @@ module.exports = {
 		"no-dupe-args": 2,
 		"no-dupe-class-members": 2,
 		"no-duplicate-case": 2,
+		"no-else-return": [0, {allowElseIf: true}],
 		"no-empty": 2,
 		"no-empty-character-class": 2,
 		"no-ex-assign": 2,
@@ -116,7 +119,7 @@ module.exports = {
 		"new-cap":  [2],
 		"use-isnan": 2,
 		"valid-typeof": 2,
-		"linebreak-style": [2, "unix"],
+		"linebreak-style": 0,
 		"prefer-template": 2,
 		"template-curly-spacing": [2, "always"],
 		"quotes": [2, "single"],
@@ -125,7 +128,10 @@ module.exports = {
 		"object-shorthand": 2,
 		"consistent-return": 0,
 		"global-require": "off",
-		"react/prop-types": [0, { skipUndeclared: true }]
+		"react-native/no-unused-styles": 2,
+		"react/jsx-one-expression-per-line": 0,
+		"require-await": 2,
+		"func-names": 0
 	},
 	"globals": {
 		"__DEV__": true

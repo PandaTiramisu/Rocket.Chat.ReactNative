@@ -1,75 +1,79 @@
-import PropTypes from 'prop-types';
 import React from 'react';
+import { View } from 'react-native';
+import PropTypes from 'prop-types';
 import FastImage from 'react-native-fast-image';
-import { TouchableOpacity, StyleSheet } from 'react-native';
-import { connect } from 'react-redux';
-import PhotoModal from './PhotoModal';
+import equal from 'deep-equal';
+import Touchable from 'react-native-platform-touchable';
+
 import Markdown from './Markdown';
+import styles from './styles';
+import { formatAttachmentUrl } from '../../lib/utils';
 
-const styles = StyleSheet.create({
-	button: {
-		flex: 1,
-		flexDirection: 'column'
-	},
-	image: {
-		width: 320,
-		height: 200
-		// resizeMode: 'cover'
-	},
-	labelContainer: {
-		alignItems: 'flex-start'
-	}
-});
+const Button = React.memo(({ children, onPress }) => (
+	<Touchable
+		onPress={onPress}
+		style={styles.imageContainer}
+		background={Touchable.Ripple('#fff')}
+	>
+		{children}
+	</Touchable>
+));
 
-@connect(state => ({
-	baseUrl: state.settings.Site_Url || state.server ? state.server.server : ''
-}))
-export default class extends React.PureComponent {
-	static propTypes = {
-		file: PropTypes.object.isRequired,
-		baseUrl: PropTypes.string.isRequired,
-		user: PropTypes.object.isRequired
-	}
+const Image = React.memo(({ img }) => (
+	<FastImage
+		style={styles.image}
+		source={{ uri: encodeURI(img) }}
+		resizeMode={FastImage.resizeMode.cover}
+	/>
+));
 
-	state = { modalVisible: false };
-
-	getDescription() {
-		const { file, customEmojis } = this.props;
-		if (file.description) {
-			return <Markdown msg={file.description} customEmojis={customEmojis} />;
-		}
+const ImageContainer = React.memo(({
+	file, baseUrl, user, useMarkdown, onOpenFileModal, getCustomEmoji
+}) => {
+	const img = formatAttachmentUrl(file.image_url, user.id, user.token, baseUrl);
+	if (!img) {
+		return null;
 	}
 
-	_onPressButton() {
-		this.setState({
-			modalVisible: true
-		});
-	}
+	const onPress = () => onOpenFileModal(file);
 
-	render() {
-		const { baseUrl, file, user } = this.props;
-		const img = `${ baseUrl }${ file.image_url }?rc_uid=${ user.id }&rc_token=${ user.token }`;
+	if (file.description) {
 		return (
-			[
-				<TouchableOpacity
-					key='image'
-					onPress={() => this._onPressButton()}
-					style={styles.button}
-				>
-					<FastImage
-						style={styles.image}
-						source={{ uri: encodeURI(img) }}
-					/>
-					{this.getDescription()}
-				</TouchableOpacity>,
-				<PhotoModal
-					key='modal'
-					title={this.props.file.title}
-					image={img}
-					isVisible={this.state.modalVisible}
-					onClose={() => this.setState({ modalVisible: false })}
-				/>
-			]
+			<Button onPress={onPress}>
+				<View>
+					<Image img={img} />
+					<Markdown msg={file.description} baseUrl={baseUrl} username={user.username} getCustomEmoji={getCustomEmoji} useMarkdown={useMarkdown} />
+				</View>
+			</Button>
 		);
 	}
-}
+
+	return (
+		<Button onPress={onPress}>
+			<Image img={img} />
+		</Button>
+	);
+}, (prevProps, nextProps) => equal(prevProps.file, nextProps.file));
+
+ImageContainer.propTypes = {
+	file: PropTypes.object,
+	baseUrl: PropTypes.string,
+	user: PropTypes.object,
+	useMarkdown: PropTypes.bool,
+	onOpenFileModal: PropTypes.func,
+	getCustomEmoji: PropTypes.func
+};
+ImageContainer.displayName = 'MessageImageContainer';
+
+Image.propTypes = {
+	img: PropTypes.string
+};
+ImageContainer.displayName = 'MessageImage';
+
+Button.propTypes = {
+	children: PropTypes.node,
+	onPress: PropTypes.func
+};
+ImageContainer.displayName = 'MessageButton';
+
+export default ImageContainer;

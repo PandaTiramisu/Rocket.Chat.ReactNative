@@ -1,134 +1,161 @@
 import React from 'react';
+import {
+	View, Linking, ScrollView, AsyncStorage, SafeAreaView, Switch
+} from 'react-native';
 import PropTypes from 'prop-types';
-import { View, ScrollView, SafeAreaView } from 'react-native';
-import RNPickerSelect from 'react-native-picker-select';
 import { connect } from 'react-redux';
 
-import LoggedView from '../View';
-import RocketChat from '../../lib/rocketchat';
-import KeyboardView from '../../presentation/KeyboardView';
-import sharedStyles from '../Styles';
-import RCTextInput from '../../containers/TextInput';
-import scrollPersistTaps from '../../utils/scrollPersistTaps';
+import { toggleMarkdown as toggleMarkdownAction } from '../../actions/markdown';
+import { SWITCH_TRACK_COLOR } from '../../constants/colors';
+import { DrawerButton } from '../../containers/HeaderButton';
+import StatusBar from '../../containers/StatusBar';
+import ListItem from '../../containers/ListItem';
+import { DisclosureImage } from '../../containers/DisclosureIndicator';
+import Separator from '../../containers/Separator';
 import I18n from '../../i18n';
-import Button from '../../containers/Button';
-import Loading from '../../containers/Loading';
-import { showErrorAlert, showToast } from '../../utils/info';
-import log from '../../utils/log';
-import { setUser } from '../../actions/login';
+import { MARKDOWN_KEY } from '../../lib/rocketchat';
+import { getReadableVersion, getDeviceModel } from '../../utils/deviceInfo';
+import openLink from '../../utils/openLink';
+import scrollPersistTaps from '../../utils/scrollPersistTaps';
+import { showErrorAlert } from '../../utils/info';
+import styles from './styles';
+import sharedStyles from '../Styles';
 
-@connect(state => ({
-	user: state.login.user
-}), dispatch => ({
-	setUser: params => dispatch(setUser(params))
-}))
-export default class SettingsView extends LoggedView {
+const LICENSE_LINK = 'https://github.com/RocketChat/Rocket.Chat.ReactNative/blob/develop/LICENSE';
+const SectionSeparator = React.memo(() => <View style={styles.sectionSeparatorBorder} />);
+
+class SettingsView extends React.Component {
+	static navigationOptions = ({ navigation }) => ({
+		headerLeft: <DrawerButton navigation={navigation} />,
+		title: I18n.t('Settings')
+	});
+
 	static propTypes = {
-		user: PropTypes.object,
-		setUser: PropTypes.func
-	};
-
-	constructor(props) {
-		super('SettingsView', props);
-		this.state = {
-			placeholder: {},
-			language: props.user ? props.user.language : 'en',
-			languages: [{
-				label: 'English',
-				value: 'en'
-			}],
-			saving: false
-		};
+		navigation: PropTypes.object,
+		server:	PropTypes.object,
+		useMarkdown: PropTypes.bool,
+		toggleMarkdown: PropTypes.func
 	}
 
-	formIsChanged = () => {
-		const { language } = this.state;
-		const { user } = this.props;
-		return !(user.language === language);
+	toggleMarkdown = (value) => {
+		AsyncStorage.setItem(MARKDOWN_KEY, JSON.stringify(value));
+		const { toggleMarkdown } = this.props;
+		toggleMarkdown(value);
 	}
 
-	submit = async() => {
-		this.setState({ saving: true });
+	navigateToRoom = (room) => {
+		const { navigation } = this.props;
+		navigation.navigate(room);
+	}
 
-		const {
-			language
-		} = this.state;
-		const { user } = this.props;
-
-		if (!this.formIsChanged()) {
-			return;
-		}
-
-		const params = {};
-
-		// language
-		if (user.language !== language) {
-			params.language = language;
-		}
-
+	sendEmail = async() => {
+		const subject = encodeURI('React Native App Support');
+		const email = encodeURI('support@rocket.chat');
+		const description = encodeURI(`
+			version: ${ getReadableVersion }
+			device: ${ getDeviceModel }
+		`);
 		try {
-			await RocketChat.saveUserPreferences(params);
-			this.props.setUser({ language: params.language });
-			this.props.navigation.setParams({ title: I18n.t('Settings') });
-
-			this.setState({ saving: false });
-			setTimeout(() => {
-				showToast(I18n.t('Preferences_saved'));
-			}, 300);
+			await Linking.openURL(`mailto:${ email }?subject=${ subject }&body=${ description }`);
 		} catch (e) {
-			this.setState({ saving: false });
-			setTimeout(() => {
-				if (e && e.error) {
-					return showErrorAlert(I18n.t(e.error, e.details));
-				}
-				showErrorAlert(I18n.t('There_was_an_error_while_action', { action: I18n.t('saving_preferences') }));
-				log('saveUserPreferences', e);
-			}, 300);
+			showErrorAlert(I18n.t('error-email-send-failed', { message: 'support@rocket.chat' }));
 		}
+	}
+
+	onPressLicense = () => openLink(LICENSE_LINK)
+
+	renderDisclosure = () => <DisclosureImage />
+
+	renderMarkdownSwitch = () => {
+		const { useMarkdown } = this.props;
+		return (
+			<Switch
+				value={useMarkdown}
+				trackColor={SWITCH_TRACK_COLOR}
+				onValueChange={this.toggleMarkdown}
+			/>
+		);
 	}
 
 	render() {
-		const { language, languages, placeholder } = this.state;
+		const { server } = this.props;
 		return (
-			<KeyboardView
-				contentContainerStyle={sharedStyles.container}
-				keyboardVerticalOffset={128}
-			>
+			<SafeAreaView style={sharedStyles.listSafeArea} testID='settings-view'>
+				<StatusBar />
 				<ScrollView
-					contentContainerStyle={sharedStyles.containerScrollView}
-					testID='settings-view-list'
 					{...scrollPersistTaps}
+					contentContainerStyle={sharedStyles.listContentContainer}
+					showsVerticalScrollIndicator={false}
+					testID='settings-view-list'
 				>
-					<SafeAreaView testID='settings-view'>
-						<RNPickerSelect
-							items={languages}
-							onValueChange={(value) => {
-								this.setState({ language: value });
-							}}
-							value={language}
-							placeholder={placeholder}
-						>
-							<RCTextInput
-								inputRef={(e) => { this.name = e; }}
-								label={I18n.t('Language')}
-								placeholder={I18n.t('Language')}
-								value={language}
-								testID='settings-view-language'
-							/>
-						</RNPickerSelect>
-						<View style={sharedStyles.alignItemsFlexStart}>
-							<Button
-								title={I18n.t('Save_Changes')}
-								type='primary'
-								onPress={this.submit}
-								disabled={!this.formIsChanged()}
-								testID='settings-view-button'
-							/>
-						</View>
-						<Loading visible={this.state.saving} />
-					</SafeAreaView>
+					<ListItem
+						title={I18n.t('Contact_us')}
+						onPress={this.sendEmail}
+						showActionIndicator
+						testID='settings-view-contact'
+						right={this.renderDisclosure}
+					/>
+					<Separator />
+					<ListItem
+						title={I18n.t('Language')}
+						onPress={() => this.navigateToRoom('LanguageView')}
+						showActionIndicator
+						testID='settings-view-language'
+						right={this.renderDisclosure}
+					/>
+					<Separator />
+					<ListItem
+						title={I18n.t('Theme')}
+						showActionIndicator
+						disabled
+						testID='settings-view-theme'
+					/>
+					<Separator />
+					<ListItem
+						title={I18n.t('Share_this_app')}
+						showActionIndicator
+						disabled
+						testID='settings-view-share-app'
+					/>
+
+					<SectionSeparator />
+
+					<ListItem
+						title={I18n.t('License')}
+						onPress={this.onPressLicense}
+						showActionIndicator
+						testID='settings-view-license'
+						right={this.renderDisclosure}
+					/>
+					<Separator />
+					<ListItem title={I18n.t('Version_no', { version: getReadableVersion })} testID='settings-view-version' />
+					<Separator />
+					<ListItem
+						title={I18n.t('Server_version', { version: server.version })}
+						subtitle={`${ server.server.split('//')[1] }`}
+						testID='settings-view-server-version'
+					/>
+
+					<SectionSeparator />
+
+					<ListItem
+						title={I18n.t('Enable_markdown')}
+						testID='settings-view-markdown'
+						right={() => this.renderMarkdownSwitch()}
+					/>
 				</ScrollView>
-			</KeyboardView>
+			</SafeAreaView>
 		);
 	}
 }
+
+const mapStateToProps = state => ({
+	server: state.server,
+	useMarkdown: state.markdown.useMarkdown
+});
+
+const mapDispatchToProps = dispatch => ({
+	toggleMarkdown: params => dispatch(toggleMarkdownAction(params))
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(SettingsView);

@@ -1,4 +1,6 @@
 apply plugin: "com.android.application"
+apply plugin: "io.fabric"
+apply plugin: "com.google.firebase.firebase-perf"
 
 import com.android.build.OutputFile
 
@@ -17,6 +19,9 @@ import com.android.build.OutputFile
  *
  *   // the entry file for bundle generation
  *   entryFile: "index.android.js",
+ *
+ *   // https://facebook.github.io/react-native/docs/performance#enable-the-ram-format
+ *   bundleCommand: "ram-bundle",
  *
  *   // whether to bundle JS and assets in debug mode
  *   bundleInDebug: false,
@@ -72,7 +77,14 @@ import com.android.build.OutputFile
  * ]
  */
 
+project.ext.react = [
+    entryFile: "index.js",
+    iconFontNames: [ 'custom.ttf' ],
+    enableHermes: false,  // clean and rebuild if changing
+]
+
 apply from: "../../node_modules/react-native/react.gradle"
+apply from: '../../node_modules/react-native-unimodules/gradle.groovy'
 
 /**
  * Set this to true to create two separate APKs instead of one:
@@ -89,19 +101,42 @@ def enableSeparateBuildPerCPUArchitecture = false
  */
 def enableProguardInReleaseBuilds = false
 
+/**
+ * The preferred build flavor of JavaScriptCore.
+ *
+ * For example, to use the international variant, you can use:
+ * `def jscFlavor = 'org.webkit:android-jsc-intl:+'`
+ *
+ * The international variant includes ICU i18n library and necessary data
+ * allowing to use e.g. `Date.toLocaleString` and `String.localeCompare` that
+ * give correct results when using with locales other than en-US.  Note that
+ * this variant is about 6MiB larger per architecture than default.
+ */
+def jscFlavor = 'org.webkit:android-jsc:+'
+/**
+ * Whether to enable the Hermes VM.
+ *
+ * This should be set on project.ext.react and mirrored here.  If it is not set
+ * on project.ext.react, JavaScript will not be compiled to Hermes Bytecode
+ * and the benefits of using Hermes will therefore be sharply reduced.
+ */
+def enableHermes = project.ext.react.get("enableHermes", false);
+
 android {
-    compileSdkVersion 27
-    buildToolsVersion "27.0.1"
+    compileSdkVersion rootProject.ext.compileSdkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
 
     defaultConfig {
         applicationId "chat.rocket.reactnative"
-        minSdkVersion 16
-        targetSdkVersion 23
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode VERSIONCODE as Integer
-        versionName "1"
-        ndk {
-            abiFilters "armeabi-v7a", "x86"
-        }
+        versionName "1.18.0"
+        vectorDrawables.useSupportLibrary = true
     }
 
     signingConfigs {
@@ -119,28 +154,22 @@ android {
             reset()
             enable enableSeparateBuildPerCPUArchitecture
             universalApk false  // If true, also generate a universal APK
-            include "armeabi-v7a", "x86"
+            include "armeabi-v7a", "x86", "arm64-v8a", "x86_64"
         }
     }
     buildTypes {
         release {
-            // shrinkResources enableProguardInReleaseBuilds
-            // zipAlignEnabled enableProguardInReleaseBuilds
-            // useProguard enableProguardInReleaseBuilds
             minifyEnabled enableProguardInReleaseBuilds
             setProguardFiles([getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'])
             signingConfig signingConfigs.release
-        }
-        debug {
-            applicationIdSuffix ".debug"
         }
     }
     // applicationVariants are e.g. debug, release
     applicationVariants.all { variant ->
         variant.outputs.each { output ->
             // For each separate APK per architecture, set a unique version code as described here:
-            // http://tools.android.com/tech-docs/new-build-system/user-guide/apk-splits
-            def versionCodes = ["armeabi-v7a":1, "x86":2]
+            // https://developer.android.com/studio/build/configure-apk-splits.html
+            def versionCodes = ["armeabi-v7a": 1, "x86": 2, "arm64-v8a": 3, "x86_64": 4]
             def abi = output.getFilter(OutputFile.ABI)
             if (abi != null) {  // null for the universal-debug, universal-release variants
                 output.versionCodeOverride =
@@ -148,54 +177,48 @@ android {
             }
         }
     }
-}
 
-buildscript {
-  repositories {
-    maven { url 'https://maven.fabric.io/public' }
-  }
+    packagingOptions {
+        pickFirst '**/armeabi-v7a/libc++_shared.so'
+        pickFirst '**/x86/libc++_shared.so'
+        pickFirst '**/arm64-v8a/libc++_shared.so'
+        pickFirst '**/x86_64/libc++_shared.so'
+        pickFirst '**/x86/libjsc.so'
+        pickFirst '**/armeabi-v7a/libjsc.so'
+    }
 
-  dependencies {
-    // These docs use an open ended version so that our plugin
-    // can be updated quickly in response to Android tooling updates
-
-    // We recommend changing it to the latest version from our changelog:
-    // https://docs.fabric.io/android/changelog.html#fabric-gradle-plugin
-    classpath 'io.fabric.tools:gradle:1.+'
-  }
-}
-
-apply plugin: 'io.fabric'
-
-repositories {
-  maven { url 'https://maven.fabric.io/public' }
+    bundle {
+        language {
+            enableSplit = false
+        }
+        density {
+            enableSplit = true
+        }
+        abi {
+            enableSplit = true
+        }
+    }
 }
 
 dependencies {
-    compile project(':react-native-i18n')
-    compile project(':react-native-fabric')
-    compile project(':react-native-audio')
-    compile project(":reactnativekeyboardinput")
-    compile project(':react-native-splash-screen')
-    compile project(':react-native-video')
-    compile project(':react-native-push-notification')
-    compile project(':react-native-svg')
-    compile project(':react-native-image-picker')
-    compile project(':react-native-vector-icons')
-    compile project(':react-native-fetch-blob')
-    compile project(':react-native-zeroconf')
-    compile project(':react-native-toast')
-    compile project(':react-native-fast-image')
-    compile project(':realm')
-    compile fileTree(dir: "libs", include: ["*.jar"])
-    compile "com.android.support:appcompat-v7:27.1.0"
-    compile "com.android.support:support-v4:27.1.0"
-    compile 'com.android.support:customtabs:27.1.0'
-    compile "com.facebook.react:react-native:+"  // From node_modules
-    compile 'com.facebook.fresco:fresco:1.7.1'
-    compile 'com.facebook.fresco:animated-gif:1.7.1'
-    compile('com.crashlytics.sdk.android:crashlytics:2.9.2@aar') {
-        transitive = true;
+    addUnimodulesDependencies()
+    implementation project(':reactnativenotifications')
+    implementation project(":reactnativekeyboardinput")
+    implementation fileTree(dir: "libs", include: ["*.jar"])
+    implementation "com.facebook.react:react-native:+"  // From node_modules
+    implementation "com.google.firebase:firebase-messaging:18.0.0"
+    implementation "com.google.firebase:firebase-core:16.0.9"
+    implementation "com.google.firebase:firebase-perf:17.0.2"
+    implementation('com.crashlytics.sdk.android:crashlytics:2.9.9@aar') {
+        transitive = true
+    }
+
+    if (enableHermes) {
+      def hermesPath = "../../node_modules/hermesvm/android/";
+      debugImplementation files(hermesPath + "hermes-debug.aar")
+      releaseImplementation files(hermesPath + "hermes-release.aar")
+    } else {
+      implementation jscFlavor
     }
 }
 
@@ -205,4 +228,6 @@ task copyDownloadableDepsToLibs(type: Copy) {
     from configurations.compile
     into 'libs'
 }
-apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"
+
+apply plugin: 'com.google.gms.google-services'
+apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)

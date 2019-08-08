@@ -2,42 +2,54 @@ import React from 'react';
 import { View, StyleSheet, Text } from 'react-native';
 import PropTypes from 'prop-types';
 import moment from 'moment';
+
 import I18n from '../../i18n';
+import sharedStyles from '../Styles';
+import { COLOR_DANGER, COLOR_TEXT_DESCRIPTION } from '../../constants/colors';
 
 const styles = StyleSheet.create({
 	container: {
-		flex: 1,
 		flexDirection: 'row',
 		alignItems: 'center',
-		marginVertical: 10
+		marginTop: 16,
+		marginBottom: 4,
+		marginHorizontal: 14
 	},
 	line: {
-		borderTopColor: '#eaeaea',
-		borderTopWidth: StyleSheet.hairlineWidth,
+		backgroundColor: COLOR_TEXT_DESCRIPTION,
+		height: 1,
 		flex: 1
 	},
 	text: {
-		color: '#444444',
-		fontSize: 11,
-		paddingHorizontal: 10,
-		transform: [{ scaleY: -1 }]
+		fontSize: 14,
+		...sharedStyles.textMedium,
+		...sharedStyles.textColorDescription
 	},
 	unreadLine: {
-		borderTopColor: 'red'
+		backgroundColor: COLOR_DANGER
 	},
 	unreadText: {
-		color: 'red'
+		color: COLOR_DANGER
+	},
+	marginLeft: {
+		marginLeft: 14
+	},
+	marginRight: {
+		marginRight: 14
+	},
+	marginHorizontal: {
+		marginHorizontal: 14
 	}
 });
 
-const DateSeparator = ({ ts, unread }) => {
-	const date = ts ? moment(ts).format('MMMM DD, YYYY') : null;
+const DateSeparator = React.memo(({ ts, unread }) => {
+	const date = ts ? moment(ts).format('MMM DD, YYYY') : null;
 	if (ts && unread) {
 		return (
 			<View style={styles.container}>
-				<Text style={[styles.text, styles.unreadText]}>{date}</Text>
-				<View style={[styles.line, styles.unreadLine]} />
 				<Text style={[styles.text, styles.unreadText]}>{I18n.t('unread_messages')}</Text>
+				<View style={[styles.line, styles.unreadLine, styles.marginHorizontal]} />
+				<Text style={[styles.text, styles.unreadText]}>{date}</Text>
 			</View>
 		);
 	}
@@ -45,18 +57,17 @@ const DateSeparator = ({ ts, unread }) => {
 		return (
 			<View style={styles.container}>
 				<View style={styles.line} />
-				<Text style={styles.text}>{date}</Text>
-				<View style={styles.line} />
+				<Text style={[styles.text, styles.marginLeft]}>{date}</Text>
 			</View>
 		);
 	}
 	return (
 		<View style={styles.container}>
+			<Text style={[styles.text, styles.unreadText, styles.marginRight]}>{I18n.t('unread_messages')}</Text>
 			<View style={[styles.line, styles.unreadLine]} />
-			<Text style={[styles.text, styles.unreadText]}>{I18n.t('unread_messages')}</Text>
 		</View>
 	);
-};
+});
 
 DateSeparator.propTypes = {
 	ts: PropTypes.instanceOf(Date),

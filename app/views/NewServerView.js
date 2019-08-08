@@ -1,69 +1,111 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Text, ScrollView, View, SafeAreaView, Keyboard } from 'react-native';
+import {
+	Text, ScrollView, Keyboard, Image, StyleSheet, TouchableOpacity
+} from 'react-native';
 import { connect } from 'react-redux';
+import { SafeAreaView } from 'react-navigation';
 
-import { serverRequest, addServer } from '../actions/server';
-import KeyboardView from '../presentation/KeyboardView';
-import styles from './Styles';
+import { serverRequest } from '../actions/server';
+import sharedStyles from './Styles';
 import scrollPersistTaps from '../utils/scrollPersistTaps';
 import Button from '../containers/Button';
 import TextInput from '../containers/TextInput';
-import Loading from '../containers/Loading';
-import LoggedView from './View';
 import I18n from '../i18n';
+import { verticalScale, moderateScale } from '../utils/scaling';
+import KeyboardView from '../presentation/KeyboardView';
+import { isIOS, isNotch } from '../utils/deviceInfo';
+import { CustomIcon } from '../lib/Icons';
+import StatusBar from '../containers/StatusBar';
+import { COLOR_PRIMARY } from '../constants/colors';
 
-@connect(state => ({
-	validInstance: !state.server.failure && !state.server.connecting,
-	validating: state.server.connecting,
-	addingServer: state.server.adding
-}), dispatch => ({
-	validateServer: url => dispatch(serverRequest(url)),
-	addServer: url => dispatch(addServer(url))
-}))
-export default class NewServerView extends LoggedView {
+const styles = StyleSheet.create({
+	image: {
+		alignSelf: 'center',
+		marginVertical: verticalScale(20),
+		width: 210,
+		height: 171
+	},
+	title: {
+		...sharedStyles.textBold,
+		...sharedStyles.textColorNormal,
+		fontSize: moderateScale(22),
+		letterSpacing: 0,
+		alignSelf: 'center'
+	},
+	inputContainer: {
+		marginTop: 25,
+		marginBottom: 15
+	},
+	backButton: {
+		position: 'absolute',
+		paddingHorizontal: 9,
+		left: 15
+	}
+});
+
+const defaultServer = 'https://open.rocket.chat';
+
+class NewServerView extends React.Component {
+	static navigationOptions = () => ({
+		header: null
+	})
+
 	static propTypes = {
-		validateServer: PropTypes.func.isRequired,
-		addServer: PropTypes.func.isRequired,
-		validating: PropTypes.bool.isRequired,
-		validInstance: PropTypes.bool.isRequired,
-		addingServer: PropTypes.bool.isRequired,
-		navigation: PropTypes.object.isRequired
+		navigation: PropTypes.object,
+		server: PropTypes.string,
+		connecting: PropTypes.bool.isRequired,
+		connectServer: PropTypes.func.isRequired
 	}
 
 	constructor(props) {
-		super('NewServerView', props);
+		super(props);
+		const server = props.navigation.getParam('server');
 		this.state = {
-			defaultServer: 'https://open.rocket.chat'
+			text: server || '',
+			autoFocus: !server
 		};
-		this.props.validateServer(this.state.defaultServer); // Need to call because in case of submit with empty field
 	}
 
 	componentDidMount() {
-		this.input.focus();
+		const { text } = this.state;
+		const { connectServer } = this.props;
+		if (text) {
+			connectServer(text);
+		}
+	}
+
+	shouldComponentUpdate(nextProps, nextState) {
+		const { text } = this.state;
+		const { connecting } = this.props;
+		if (nextState.text !== text) {
+			return true;
+		}
+		if (nextProps.connecting !== connecting) {
+			return true;
+		}
+		return false;
 	}
 
 	onChangeText = (text) => {
 		this.setState({ text });
-		this.props.validateServer(this.completeUrl(text));
 	}
 
 	submit = () => {
-		if (this.props.validInstance) {
+		const { text } = this.state;
+		const { connectServer } = this.props;
+
+		if (text) {
 			Keyboard.dismiss();
-			this.props.addServer(this.completeUrl(this.state.text));
+			connectServer(this.completeUrl(text));
 		}
 	}
 
 	completeUrl = (url) => {
 		url = url && url.trim();
 
-		if (!url) {
-			return this.state.defaultServer;
-		}
-
-		if (/^(\w|[0-9-_]){3,}$/.test(url) &&
-				/^(htt(ps?)?)|(loca((l)?|(lh)?|(lho)?|(lhos)?|(lhost:?\d*)?)$)/.test(url) === false) {
+		if (/^(\w|[0-9-_]){3,}$/.test(url)
+			&& /^(htt(ps?)?)|(loca((l)?|(lh)?|(lho)?|(lhos)?|(lhost:?\d*)?)$)/.test(url) === false) {
 			url = `${ url }.rocket.chat`;
 		}
 
@@ -78,63 +120,75 @@ export default class NewServerView extends LoggedView {
 		return url.replace(/\/+$/, '');
 	}
 
-	renderValidation = () => {
-		if (this.props.validating) {
-			return (
-				<Text style={[styles.validateText, styles.validatingText]}>
-					{I18n.t('Validating')} {this.state.text || 'open'} ...
-				</Text>
-			);
+	renderBack = () => {
+		const { navigation } = this.props;
+
+		let top = 15;
+		if (isIOS) {
+			top = isNotch ? 45 : 30;
 		}
 
-		if (this.props.validInstance) {
-			return (
-				<Text style={[styles.validateText, styles.validText]}>
-					{this.state.url} {I18n.t('is_a_valid_RocketChat_instance')}
-				</Text>
-			);
-		}
 		return (
-			<Text style={[styles.validateText, styles.invalidText]}>
-				{this.state.url} {I18n.t('is_not_a_valid_RocketChat_instance')}
-			</Text>
+			<TouchableOpacity
+				style={[styles.backButton, { top }]}
+				onPress={() => navigation.pop()}
+			>
+				<CustomIcon
+					name='back'
+					size={30}
+					color={COLOR_PRIMARY}
+				/>
+			</TouchableOpacity>
 		);
 	}
 
 	render() {
-		const { validInstance } = this.props;
+		const { connecting } = this.props;
+		const { text, autoFocus } = this.state;
 		return (
 			<KeyboardView
-				contentContainerStyle={styles.container}
+				contentContainerStyle={sharedStyles.container}
 				keyboardVerticalOffset={128}
+				key='login-view'
 			>
-				<ScrollView {...scrollPersistTaps} contentContainerStyle={styles.containerScrollView}>
-					<SafeAreaView testID='new-server-view'>
-						<Text style={[styles.loginText, styles.loginTitle]}>{I18n.t('Sign_in_your_server')}</Text>
+				<StatusBar light />
+				<ScrollView {...scrollPersistTaps} contentContainerStyle={sharedStyles.containerScrollView}>
+					<SafeAreaView style={sharedStyles.container} testID='new-server-view' forceInset={{ vertical: 'never' }}>
+						<Image style={styles.image} source={{ uri: 'new_server' }} />
+						<Text style={styles.title}>{I18n.t('Sign_in_your_server')}</Text>
 						<TextInput
-							inputRef={e => this.input = e}
-							containerStyle={{ marginBottom: 5 }}
-							label={I18n.t('Your_server')}
-							placeholder={this.state.defaultServer}
-							returnKeyType='done'
+							autoFocus={autoFocus}
+							containerStyle={styles.inputContainer}
+							placeholder={defaultServer}
+							value={text}
+							returnKeyType='send'
 							onChangeText={this.onChangeText}
 							testID='new-server-view-input'
 							onSubmitEditing={this.submit}
+							clearButtonMode='while-editing'
 						/>
-						{this.renderValidation()}
-						<View style={[styles.alignItemsFlexStart, { marginTop: 20 }]}>
-							<Button
-								title={I18n.t('Connect')}
-								type='primary'
-								onPress={this.submit}
-								disabled={!validInstance}
-								testID='new-server-view-button'
-							/>
-						</View>
-						<Loading visible={this.props.addingServer} />
+						<Button
+							title={I18n.t('Connect')}
+							type='primary'
+							onPress={this.submit}
+							disabled={!text}
+							loading={connecting}
+							testID='new-server-view-button'
+						/>
 					</SafeAreaView>
 				</ScrollView>
+				{this.renderBack()}
 			</KeyboardView>
 		);
 	}
 }
+
+const mapStateToProps = state => ({
+	connecting: state.server.connecting
+});
+
+const mapDispatchToProps = dispatch => ({
+	connectServer: server => dispatch(serverRequest(server))
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(NewServerView);

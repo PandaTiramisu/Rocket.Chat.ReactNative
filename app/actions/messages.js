@@ -1,25 +1,5 @@
 import * as types from './actionsTypes';
 
-export function messagesRequest(room) {
-	return {
-		type: types.MESSAGES.REQUEST,
-		room
-	};
-}
-
-export function messagesSuccess() {
-	return {
-		type: types.MESSAGES.SUCCESS
-	};
-}
-
-export function messagesFailure(err) {
-	return {
-		type: types.MESSAGES.FAILURE,
-		err
-	};
-}
-
 export function actionsShow(actionMessage) {
 	return {
 		type: types.MESSAGES.ACTIONS_SHOW,
@@ -117,33 +97,6 @@ export function toggleStarFailure() {
 	};
 }
 
-export function permalinkRequest(message) {
-	return {
-		type: types.MESSAGES.PERMALINK_REQUEST,
-		message
-	};
-}
-
-export function permalinkSuccess(permalink) {
-	return {
-		type: types.MESSAGES.PERMALINK_SUCCESS,
-		permalink
-	};
-}
-
-export function permalinkFailure(err) {
-	return {
-		type: types.MESSAGES.PERMALINK_FAILURE,
-		err
-	};
-}
-
-export function permalinkClear() {
-	return {
-		type: types.MESSAGES.PERMALINK_CLEAR
-	};
-}
-
 export function togglePinRequest(message) {
 	return {
 		type: types.MESSAGES.TOGGLE_PIN_REQUEST,
@@ -164,16 +117,17 @@ export function togglePinFailure(err) {
 	};
 }
 
-export function setInput(message) {
+export function replyInit(message, mention) {
 	return {
-		type: types.MESSAGES.SET_INPUT,
-		message
+		type: types.MESSAGES.REPLY_INIT,
+		message,
+		mention
 	};
 }
 
-export function clearInput() {
+export function replyCancel() {
 	return {
-		type: types.MESSAGES.CLEAR_INPUT
+		type: types.MESSAGES.REPLY_CANCEL
 	};
 }
 

@@ -1,32 +1,42 @@
 package chat.rocket.reactnative;
 
 import android.app.Application;
+import android.util.Log;
+import android.content.Context;
+import android.os.Bundle;
 
+import com.facebook.react.PackageList;
+import com.facebook.hermes.reactexecutor.HermesExecutorFactory;
+import com.facebook.react.bridge.JavaScriptExecutorFactory;
 import com.facebook.react.ReactApplication;
-import com.horcrux.svg.SvgPackage;
-import com.imagepicker.ImagePickerPackage;
-import com.oblador.vectoricons.VectorIconsPackage;
-import com.RNFetchBlob.RNFetchBlobPackage;
-import com.balthazargronon.RCTZeroconf.ZeroconfReactPackage;
-import io.realm.react.RealmReactPackage;
 import com.facebook.react.ReactNativeHost;
 import com.facebook.react.ReactPackage;
-import com.facebook.react.shell.MainReactPackage;
 import com.facebook.soloader.SoLoader;
-import com.dieam.reactnativepushnotification.ReactNativePushNotificationPackage;
-import com.brentvatne.react.ReactVideoPackage;
-import com.remobile.toast.RCTToastPackage;
+
+import chat.rocket.reactnative.generated.BasePackageList;
+
+import org.unimodules.adapters.react.ModuleRegistryAdapter;
+import org.unimodules.adapters.react.ReactModuleRegistryProvider;
+import org.unimodules.core.interfaces.SingletonModule;
+
+import com.wix.reactnativenotifications.RNNotificationsPackage;
+import com.wix.reactnativenotifications.core.AppLaunchHelper;
+import com.wix.reactnativenotifications.core.AppLifecycleFacade;
+import com.wix.reactnativenotifications.core.JsIOHelper;
+import com.wix.reactnativenotifications.core.notification.INotificationsApplication;
+import com.wix.reactnativenotifications.core.notification.IPushNotification;
 import com.wix.reactnativekeyboardinput.KeyboardInputPackage;
-import com.rnim.rn.audio.ReactNativeAudioPackage;
-import com.smixx.fabric.FabricPackage;
-import com.dylanvann.fastimage.FastImageViewPackage;
-import com.AlexanderZaytsev.RNI18n.RNI18nPackage;
+
+import io.invertase.firebase.fabric.crashlytics.RNFirebaseCrashlyticsPackage;
+import io.invertase.firebase.analytics.RNFirebaseAnalyticsPackage;
+import io.invertase.firebase.perf.RNFirebasePerformancePackage;
 
 import java.util.Arrays;
 import java.util.List;
-import org.devio.rn.splashscreen.SplashScreenReactPackage;
 
-public class MainApplication extends Application implements ReactApplication {
+public class MainApplication extends Application implements ReactApplication, INotificationsApplication {
+
+  private final ReactModuleRegistryProvider mModuleRegistryProvider = new ReactModuleRegistryProvider(new BasePackageList().getPackageList(), Arrays.<SingletonModule>asList());
 
   private final ReactNativeHost mReactNativeHost = new ReactNativeHost(this) {
     @Override
@@ -36,36 +46,42 @@ public class MainApplication extends Application implements ReactApplication {
 
     @Override
     protected List<ReactPackage> getPackages() {
-      return Arrays.<ReactPackage>asList(
-			  new MainReactPackage(),
-        new SvgPackage(),
-        new ImagePickerPackage(),
-        new VectorIconsPackage(),
-        new RNFetchBlobPackage(),
-        new ZeroconfReactPackage(),
-        new RealmReactPackage(),
-        new ReactNativePushNotificationPackage(),
-        new ReactVideoPackage(),
-        new SplashScreenReactPackage(),
-        new RCTToastPackage(),
-        new ReactNativeAudioPackage(),
-        new KeyboardInputPackage(MainApplication.this),
-        new RocketChatNativePackage(),
-        new FabricPackage(),
-        new FastImageViewPackage(),
-        new RNI18nPackage()
-      );
+      @SuppressWarnings("UnnecessaryLocalVariable")
+      List<ReactPackage> packages = new PackageList(this).getPackages();
+      packages.add(new RNFirebaseCrashlyticsPackage());
+      packages.add(new RNFirebaseAnalyticsPackage());
+      packages.add(new RNFirebasePerformancePackage());
+      packages.add(new KeyboardInputPackage(MainApplication.this));
+      packages.add(new RNNotificationsPackage(MainApplication.this));
+      packages.add(new ModuleRegistryAdapter(mModuleRegistryProvider));
+      return packages;
+    }
+
+    @Override
+    protected String getJSMainModuleName() {
+      return "index";
     }
   };
 
   @Override
   public ReactNativeHost getReactNativeHost() {
-      return mReactNativeHost;
+    return mReactNativeHost;
   }
 
-	@Override
- 	public void onCreate() {
-   	super.onCreate();
-   	SoLoader.init(this, /* native exopackage */ false);
- 	}
+  @Override
+  public void onCreate() {
+    super.onCreate();
+    SoLoader.init(this, /* native exopackage */ false);
+  }
+
+  @Override
+  public IPushNotification getPushNotification(Context context, Bundle bundle, AppLifecycleFacade defaultFacade, AppLaunchHelper defaultAppLaunchHelper) {
+      return new CustomPushNotification(
+              context,
+              bundle,
+              defaultFacade,
+              defaultAppLaunchHelper,
+              new JsIOHelper()
+      );
+  }
 }

@@ -1,135 +1,105 @@
-import { AsyncStorage } from 'react-native';
-import { put, call, take, takeLatest, select, all } from 'redux-saga/effects';
+import {
+	put, call, takeLatest, select, take, fork, cancel
+} from 'redux-saga/effects';
+import RNUserDefaults from 'rn-user-defaults';
+import moment from 'moment';
+import 'moment/min/locales';
 
 import * as types from '../actions/actionsTypes';
-import {
-	// loginRequest,
-	// loginSubmit,
-	registerRequest,
-	registerIncomplete,
-	// loginSuccess,
-	loginFailure,
-	// logout,
-	// setToken,
-	registerSuccess,
-	setUsernameRequest,
-	setUsernameSuccess,
-	forgotPasswordSuccess,
-	forgotPasswordFailure
-} from '../actions/login';
+import { appStart } from '../actions';
+import { serverFinishAdd, selectServerRequest } from '../actions/server';
+import { loginFailure, loginSuccess, setUser } from '../actions/login';
+import { roomsRequest } from '../actions/rooms';
+import { toMomentLocale } from '../utils/moment';
 import RocketChat from '../lib/rocketchat';
-import * as NavigationService from '../containers/routes/NavigationService';
 import log from '../utils/log';
 import I18n from '../i18n';
+import database from '../lib/realm';
+import EventEmitter from '../utils/events';
 
-const getUser = state => state.login;
 const getServer = state => state.server.server;
-const getIsConnected = state => state.meteor.connected;
-
-// const loginCall = args => ((args.resume || args.oauth) ? RocketChat.login(args) : RocketChat.loginWithPassword(args));
-const loginCall = args => RocketChat.loginWithPassword(args);
-const registerCall = args => RocketChat.register(args);
-const setUsernameCall = args => RocketChat.setUsername(args);
-const loginSuccessCall = () => RocketChat.loginSuccess();
+const loginWithPasswordCall = args => RocketChat.loginWithPassword(args);
+const loginCall = args => RocketChat.login(args);
 const logoutCall = args => RocketChat.logout(args);
-const forgotPasswordCall = args => RocketChat.forgotPassword(args);
 
-// const getToken = function* getToken() {
-// 	const currentServer = yield select(getServer);
-// 	const user = yield call([AsyncStorage, 'getItem'], `${ RocketChat.TOKEN_KEY }-${ currentServer }`);
-// 	if (user) {
-// 		try {
-// 			yield put(setToken(JSON.parse(user)));
-// 			yield call([AsyncStorage, 'setItem'], RocketChat.TOKEN_KEY, JSON.parse(user).token || '');
-// 			return JSON.parse(user);
-// 		} catch (e) {
-// 			console.log('getTokenerr', e);
-// 		}
-// 	} else {
-// 		return yield put(setToken());
-// 	}
-// };
-
-// const handleLoginWhenServerChanges = function* handleLoginWhenServerChanges() {
-// 	try {
-// 		const user = yield call(getToken);
-// 		if (user.token) {
-// 			yield put(loginRequest({ resume: user.token }));
-// 		}
-// 	} catch (e) {
-// 		console.log(e);
-// 	}
-// };
-
-const saveToken = function* saveToken() {
+const handleLoginRequest = function* handleLoginRequest({ credentials }) {
 	try {
-		const [server, user] = yield all([select(getServer), select(getUser)]);
-		yield AsyncStorage.setItem(RocketChat.TOKEN_KEY, user.token);
-		yield AsyncStorage.setItem(`${ RocketChat.TOKEN_KEY }-${ server }`, JSON.stringify(user));
-		const token = yield AsyncStorage.getItem('pushId');
-		if (token) {
-			yield RocketChat.registerPushToken(user.user.id, token);
+		let result;
+		if (credentials.resume) {
+			result = yield call(loginCall, credentials);
+		} else {
+			result = yield call(loginWithPasswordCall, credentials);
 		}
-		if (!user.user.username && !user.isRegistering) {
-			yield put(registerIncomplete());
+		return yield put(loginSuccess(result));
+	} catch (error) {
+		yield put(loginFailure(error));
+	}
+};
+
+const fetchPermissions = function* fetchPermissions() {
+	yield RocketChat.getPermissions();
+};
+
+const fetchCustomEmojis = function* fetchCustomEmojis() {
+	yield RocketChat.getCustomEmojis();
+};
+
+const fetchRoles = function* fetchRoles() {
+	yield RocketChat.getRoles();
+};
+
+const fetchSlashCommands = function* fetchSlashCommands() {
+	yield RocketChat.getSlashCommands();
+};
+
+const registerPushToken = function* registerPushToken() {
+	yield RocketChat.registerPushToken();
+};
+
+const fetchUserPresence = function* fetchUserPresence() {
+	yield RocketChat.getUserPresence();
+};
+
+const handleLoginSuccess = function* handleLoginSuccess({ user }) {
+	try {
+		const adding = yield select(state => state.server.adding);
+		yield RNUserDefaults.set(RocketChat.TOKEN_KEY, user.token);
+
+		const server = yield select(getServer);
+		yield put(roomsRequest());
+		yield fork(fetchPermissions);
+		yield fork(fetchCustomEmojis);
+		yield fork(fetchRoles);
+		yield fork(fetchSlashCommands);
+		yield fork(registerPushToken);
+		yield fork(fetchUserPresence);
+
+		I18n.locale = user.language;
+		moment.locale(toMomentLocale(user.language));
+
+		const { serversDB } = database.databases;
+		serversDB.write(() => {
+			try {
+				serversDB.create('user', user, true);
+			} catch (e) {
+				log('err_set_user_token', e);
+			}
+		});
+
+		yield RNUserDefaults.set(`${ RocketChat.TOKEN_KEY }-${ server }`, user.id);
+		yield put(setUser(user));
+		EventEmitter.emit('connected');
+
+		if (!user.username) {
+			yield put(appStart('setUsername'));
+		} else if (adding) {
+			yield put(serverFinishAdd());
+			yield put(appStart('inside'));
+		} else {
+			yield put(appStart('inside'));
 		}
 	} catch (e) {
-		log('saveToken', e);
-	}
-};
-
-// const handleLoginRequest = function* handleLoginRequest({ credentials }) {
-// 	try {
-// 		// const server = yield select(getServer);
-// 		const user = yield call(loginCall, credentials);
-// 		yield put(loginSuccess(user));
-// 	} catch (err) {
-// 		if (err.error === 403) {
-// 			return yield put(logout());
-// 		}
-// 		yield put(loginFailure(err));
-// 	}
-// };
-
-// const handleLoginSubmit = function* handleLoginSubmit({ credentials }) {
-// 	yield put(loginRequest(credentials));
-// };
-
-const handleRegisterSubmit = function* handleRegisterSubmit({ credentials }) {
-	yield put(registerRequest(credentials));
-};
-
-const handleRegisterRequest = function* handleRegisterRequest({ credentials }) {
-	try {
-		yield call(registerCall, { credentials });
-		yield put(registerSuccess(credentials));
-	} catch (err) {
-		yield put(loginFailure(err));
-	}
-};
-
-const handleRegisterSuccess = function* handleRegisterSuccess({ credentials }) {
-	try {
-		yield call(loginCall, {
-			username: credentials.email,
-			password: credentials.pass
-		});
-	} catch (err) {
-		yield put(loginFailure(err));
-	}
-};
-
-const handleSetUsernameSubmit = function* handleSetUsernameSubmit({ credentials }) {
-	yield put(setUsernameRequest(credentials));
-};
-
-const handleSetUsernameRequest = function* handleSetUsernameRequest({ credentials }) {
-	try {
-		yield call(setUsernameCall, { credentials });
-		yield put(setUsernameSuccess());
-		yield call(loginSuccessCall);
-	} catch (err) {
-		yield put(loginFailure(err));
+		log('err_handle_login_success', e);
 	}
 };
 
@@ -138,62 +108,48 @@ const handleLogout = function* handleLogout() {
 	if (server) {
 		try {
 			yield call(logoutCall, { server });
+			const { serversDB } = database.databases;
+			// all servers
+			const servers = yield serversDB.objects('servers');
+			// filter logging out server and delete it
+			const serverRecord = servers.filtered('id = $0', server);
+			serversDB.write(() => {
+				serversDB.delete(serverRecord);
+			});
+			// see if there's other logged in servers and selects first one
+			if (servers.length > 0) {
+				const newServer = servers[0].id;
+				const token = yield RNUserDefaults.get(`${ RocketChat.TOKEN_KEY }-${ newServer }`);
+				if (token) {
+					return yield put(selectServerRequest(newServer));
+				}
+			}
+			// if there's no servers, go outside
+			yield put(appStart('outside'));
 		} catch (e) {
-			log('handleLogout', e);
+			yield put(appStart('outside'));
+			log('err_handle_logout', e);
 		}
 	}
 };
 
-const handleRegisterIncomplete = function* handleRegisterIncomplete() {
-	yield call(NavigationService.navigate, 'Register');
-};
-
-const handleForgotPasswordRequest = function* handleForgotPasswordRequest({ email }) {
-	try {
-		yield call(forgotPasswordCall, email);
-		yield put(forgotPasswordSuccess());
-	} catch (err) {
-		yield put(forgotPasswordFailure(err));
+const handleSetUser = function handleSetUser({ user }) {
+	if (user && user.language) {
+		I18n.locale = user.language;
+		moment.locale(toMomentLocale(user.language));
 	}
-};
-
-const watchLoginOpen = function* watchLoginOpen() {
-	try {
-		const isConnected = yield select(getIsConnected);
-		if (!isConnected) {
-			yield take(types.METEOR.SUCCESS);
-		}
-		const sub = yield RocketChat.subscribe('meteor.loginServiceConfiguration');
-		yield take(types.LOGIN.CLOSE);
-		yield sub.unsubscribe().catch(err => console.warn(err));
-	} catch (e) {
-		log('watchLoginOpen', e);
-	}
-};
-
-// eslint-disable-next-line require-yield
-const handleSetUser = function* handleSetUser(params) {
-	const [server, user] = yield all([select(getServer), select(getUser)]);
-	if (params.language) {
-		I18n.locale = params.language;
-	}
-	yield AsyncStorage.setItem(`${ RocketChat.TOKEN_KEY }-${ server }`, JSON.stringify(user));
 };
 
 const root = function* root() {
-	// yield takeLatest(types.METEOR.SUCCESS, handleLoginWhenServerChanges);
-	// yield takeLatest(types.LOGIN.REQUEST, handleLoginRequest);
-	yield takeLatest(types.LOGIN.SUCCESS, saveToken);
-	// yield takeLatest(types.LOGIN.SUBMIT, handleLoginSubmit);
-	yield takeLatest(types.LOGIN.REGISTER_REQUEST, handleRegisterRequest);
-	yield takeLatest(types.LOGIN.REGISTER_SUBMIT, handleRegisterSubmit);
-	yield takeLatest(types.LOGIN.REGISTER_SUCCESS, handleRegisterSuccess);
-	yield takeLatest(types.LOGIN.REGISTER_INCOMPLETE, handleRegisterIncomplete);
-	yield takeLatest(types.LOGIN.SET_USERNAME_SUBMIT, handleSetUsernameSubmit);
-	yield takeLatest(types.LOGIN.SET_USERNAME_REQUEST, handleSetUsernameRequest);
+	yield takeLatest(types.LOGIN.REQUEST, handleLoginRequest);
 	yield takeLatest(types.LOGOUT, handleLogout);
-	yield takeLatest(types.FORGOT_PASSWORD.REQUEST, handleForgotPasswordRequest);
-	yield takeLatest(types.LOGIN.OPEN, watchLoginOpen);
 	yield takeLatest(types.USER.SET, handleSetUser);
+
+	while (true) {
+		const params = yield take(types.LOGIN.SUCCESS);
+		const loginSuccessTask = yield fork(handleLoginSuccess, params);
+		yield take(types.SERVER.SELECT_REQUEST);
+		yield cancel(loginSuccessTask);
+	}
 };
 export default root;

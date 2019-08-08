@@ -1,10 +1,16 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { View, SafeAreaView, Platform, PermissionsAndroid, Text } from 'react-native';
+import {
+	View, SafeAreaView, PermissionsAndroid, Text
+} from 'react-native';
 import { AudioRecorder, AudioUtils } from 'react-native-audio';
-import Icon from 'react-native-vector-icons/MaterialIcons';
+import { BorderlessButton } from 'react-native-gesture-handler';
+
 import styles from './styles';
 import I18n from '../../i18n';
+import { isIOS, isAndroid } from '../../utils/deviceInfo';
+import { CustomIcon } from '../../lib/Icons';
+import { COLOR_SUCCESS, COLOR_DANGER } from '../../constants/colors';
 
 export const _formatTime = function(seconds) {
 	let minutes = Math.floor(seconds / 60);
@@ -16,7 +22,7 @@ export const _formatTime = function(seconds) {
 
 export default class extends React.PureComponent {
 	static async permission() {
-		if (Platform.OS !== 'android') {
+		if (!isAndroid) {
 			return true;
 		}
 
@@ -38,13 +44,14 @@ export default class extends React.PureComponent {
 
 		this.recordingCanceled = false;
 		this.recording = true;
+		this.name = `${ Date.now() }.aac`;
 		this.state = {
 			currentTime: '00:00'
 		};
 	}
 
 	componentDidMount() {
-		const audioPath = `${ AudioUtils.CachesDirectoryPath }/${ Date.now() }.aac`;
+		const audioPath = `${ AudioUtils.CachesDirectoryPath }/${ this.name }`;
 
 		AudioRecorder.prepareRecordingAtPath(audioPath, {
 			SampleRate: 22050,
@@ -60,8 +67,8 @@ export default class extends React.PureComponent {
 		};
 		//
 		AudioRecorder.onFinished = (data) => {
-			if (!this.recordingCanceled && Platform.OS === 'ios') {
-				this._finishRecording(data.status === 'OK', data.audioFileURL);
+			if (!this.recordingCanceled && isIOS) {
+				this.finishRecording(data.status === 'OK', data.audioFileURL);
 			}
 		};
 		AudioRecorder.startRecording();
@@ -73,30 +80,32 @@ export default class extends React.PureComponent {
 		}
 	}
 
-	_finishRecording(didSucceed, filePath) {
+	finishRecording = (didSucceed, filePath) => {
+		const { onFinish } = this.props;
 		if (!didSucceed) {
-			return this.props.onFinish && this.props.onFinish(didSucceed);
+			return onFinish && onFinish(didSucceed);
 		}
-
-		const path = filePath.startsWith('file://') ? filePath.split('file://')[1] : filePath;
+		if (isAndroid) {
+			filePath = filePath.startsWith('file://') ? filePath : `file://${ filePath }`;
+		}
 		const fileInfo = {
+			name: this.name,
 			type: 'audio/aac',
 			store: 'Uploads',
-			path
+			path: filePath
 		};
-		return this.props.onFinish && this.props.onFinish(fileInfo);
+		return onFinish && onFinish(fileInfo);
 	}
 
 	finishAudioMessage = async() => {
 		try {
 			this.recording = false;
 			const filePath = await AudioRecorder.stopRecording();
-			if (Platform.OS === 'android') {
-				this._finishRecording(true, filePath);
+			if (isAndroid) {
+				this.finishRecording(true, filePath);
 			}
 		} catch (err) {
-			this._finishRecording(false);
-			console.error(err);
+			this.finishRecording(false);
 		}
 	}
 
@@ -104,35 +113,46 @@ export default class extends React.PureComponent {
 		this.recording = false;
 		this.recordingCanceled = true;
 		await AudioRecorder.stopRecording();
-		return this._finishRecording(false);
+		return this.finishRecording(false);
 	}
 
 	render() {
+		const { currentTime } = this.state;
+
 		return (
 			<SafeAreaView
 				key='messagebox-recording'
 				testID='messagebox-recording'
 				style={styles.textBox}
 			>
-				<View style={[styles.textArea, { backgroundColor: '#F6F7F9' }]}>
-					<Icon
-						style={[styles.actionButtons, { color: 'red' }]}
-						name='clear'
-						key='clear'
+				<View style={styles.textArea}>
+					<BorderlessButton
+						onPress={this.cancelAudioMessage}
 						accessibilityLabel={I18n.t('Cancel_recording')}
 						accessibilityTraits='button'
-						onPress={this.cancelAudioMessage}
-					/>
-					<Text key='currentTime' style={styles.textBoxInput}>{this.state.currentTime}</Text>
-					<Icon
-						style={[styles.actionButtons, { color: 'green' }]}
-						name='check'
-						key='check'
+						style={styles.actionButton}
+					>
+						<CustomIcon
+							size={22}
+							color={COLOR_DANGER}
+							name='cross'
+						/>
+					</BorderlessButton>
+					<Text key='currentTime' style={styles.textBoxInput}>{currentTime}</Text>
+					<BorderlessButton
+						onPress={this.finishAudioMessage}
 						accessibilityLabel={I18n.t('Finish_recording')}
 						accessibilityTraits='button'
-						onPress={this.finishAudioMessage}
-					/>
+						style={styles.actionButton}
+					>
+						<CustomIcon
+							size={22}
+							color={COLOR_SUCCESS}
+							name='check'
+						/>
+					</BorderlessButton>
 				</View>
-			</SafeAreaView>);
+			</SafeAreaView>
+		);
 	}
 }

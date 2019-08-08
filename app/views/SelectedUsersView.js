@@ -1,316 +1,285 @@
-import ActionButton from 'react-native-action-button';
 import React from 'react';
 import PropTypes from 'prop-types';
-import Icon from 'react-native-vector-icons/Ionicons';
-import { View, StyleSheet, TextInput, Text, TouchableOpacity, SafeAreaView, FlatList, LayoutAnimation, Platform } from 'react-native';
+import {
+	View, StyleSheet, FlatList, LayoutAnimation
+} from 'react-native';
 import { connect } from 'react-redux';
-import { addUser, removeUser, reset } from '../actions/selectedUsers';
-import database from '../lib/realm';
+import { SafeAreaView } from 'react-navigation';
+import equal from 'deep-equal';
+
+import {
+	addUser as addUserAction, removeUser as removeUserAction, reset as resetAction, setLoading as setLoadingAction
+} from '../actions/selectedUsers';
+import database, { safeAddListener } from '../lib/realm';
 import RocketChat from '../lib/rocketchat';
-import RoomItem from '../presentation/RoomItem';
-import Avatar from '../containers/Avatar';
+import UserItem from '../presentation/UserItem';
 import Loading from '../containers/Loading';
 import debounce from '../utils/debounce';
-import LoggedView from './View';
 import I18n from '../i18n';
+import log from '../utils/log';
+import { isIOS } from '../utils/deviceInfo';
+import SearchBox from '../containers/SearchBox';
+import sharedStyles from './Styles';
+import { Item, CustomHeaderButtons } from '../containers/HeaderButton';
+import StatusBar from '../containers/StatusBar';
+import { COLOR_WHITE } from '../constants/colors';
 
 const styles = StyleSheet.create({
-	container: {
-		flex: 1,
-		alignItems: 'stretch',
-		justifyContent: 'center'
-	},
 	safeAreaView: {
 		flex: 1,
-		backgroundColor: '#FFFFFF'
+		backgroundColor: isIOS ? '#F7F8FA' : '#E1E5E8'
 	},
-	list: {
-		width: '100%',
-		backgroundColor: '#FFFFFF'
+	header: {
+		backgroundColor: COLOR_WHITE
 	},
-	actionButtonIcon: {
-		fontSize: 20,
-		height: 22,
-		color: 'white'
-	},
-	searchBoxView: {
-		backgroundColor: '#eee'
-	},
-	searchBox: {
-		backgroundColor: '#fff',
-		margin: 5,
-		borderRadius: 5,
-		padding: 5,
-		paddingLeft: 10,
-		color: '#aaa'
-	},
-	selectItemView: {
-		width: 80,
-		height: 80,
-		padding: 8,
-		flexDirection: 'column',
-		justifyContent: 'center',
-		alignItems: 'center'
-	},
-	status: {
-		bottom: -2,
-		right: -2,
-		borderWidth: 2,
-		borderRadius: 12,
-		width: 12,
-		height: 12
+	separator: {
+		marginLeft: 60
 	}
 });
 
-@connect(
-	state => ({
-		user: state.login.user,
-		Site_Url: state.settings.Site_Url,
-		users: state.selectedUsers.users,
-		loading: state.selectedUsers.loading
-	}),
-	dispatch => ({
-		addUser: user => dispatch(addUser(user)),
-		removeUser: user => dispatch(removeUser(user)),
-		reset: () => dispatch(reset())
-	})
-)
-export default class SelectedUsersView extends LoggedView {
+class SelectedUsersView extends React.Component {
+	static navigationOptions = ({ navigation }) => {
+		const title = navigation.getParam('title');
+		const nextAction = navigation.getParam('nextAction', () => {});
+		return {
+			title,
+			headerRight: (
+				<CustomHeaderButtons>
+					<Item title={I18n.t('Next')} onPress={nextAction} testID='selected-users-view-submit' />
+				</CustomHeaderButtons>
+			)
+		};
+	}
+
 	static propTypes = {
-		navigation: PropTypes.object.isRequired,
-		user: PropTypes.object,
-		Site_Url: PropTypes.string,
+		navigation: PropTypes.object,
+		baseUrl: PropTypes.string,
 		addUser: PropTypes.func.isRequired,
 		removeUser: PropTypes.func.isRequired,
 		reset: PropTypes.func.isRequired,
 		users: PropTypes.array,
-		loading: PropTypes.bool
-	};
-
-	static navigationOptions = ({ navigation }) => {
-		const params = navigation.state.params || {};
-
-		return {
-			headerRight: (
-				params.showCreateiOS && Platform.OS === 'ios' ?
-					<TouchableOpacity
-						style={{
-							backgroundColor: 'transparent',
-							height: 44,
-							width: 44,
-							alignItems: 'center',
-							justifyContent: 'center'
-						}}
-						onPress={() => params.nextAction()}
-						accessibilityLabel={I18n.t('Submit')}
-						accessibilityTraits='button'
-						testID='selected-users-view-submit'
-					>
-						<Icon
-							name='ios-add'
-							color='#292E35'
-							size={24}
-							backgroundColor='transparent'
-						/>
-					</TouchableOpacity> : null
-			)
-		};
+		loading: PropTypes.bool,
+		setLoadingInvite: PropTypes.func,
+		user: PropTypes.shape({
+			id: PropTypes.string,
+			token: PropTypes.string
+		})
 	};
 
 	constructor(props) {
-		super('SelectedUsersView', props);
+		super(props);
 		this.data = database.objects('subscriptions').filtered('t = $0', 'd').sorted('roomUpdatedAt', true);
 		this.state = {
 			search: []
 		};
-		this.data.addListener(this.updateState);
+		safeAddListener(this.data, this.updateState);
 	}
 
-	componentWillReceiveProps(nextProps) {
-		if (nextProps.users.length !== this.props.users.length) {
-			this.props.navigation.setParams({
-				showCreateiOS: nextProps.users.length > 0
-			});
+	componentDidMount() {
+		const { navigation } = this.props;
+		navigation.setParams({ nextAction: this.nextAction });
+	}
+
+	shouldComponentUpdate(nextProps, nextState) {
+		const { search } = this.state;
+		const { users, loading } = this.props;
+		if (nextProps.loading !== loading) {
+			return true;
 		}
+		if (!equal(nextProps.users, users)) {
+			return true;
+		}
+		if (!equal(nextState.search, search)) {
+			return true;
+		}
+		return false;
 	}
 
 	componentWillUnmount() {
+		const { reset } = this.props;
 		this.updateState.stop();
 		this.data.removeAllListeners();
-		this.props.reset();
+		reset();
 	}
 
 	onSearchChangeText(text) {
 		this.search(text);
 	}
 
+	nextAction = async() => {
+		const { navigation, setLoadingInvite } = this.props;
+		const nextActionID = navigation.getParam('nextActionID');
+		if (nextActionID === 'CREATE_CHANNEL') {
+			navigation.navigate('CreateChannelView');
+		} else {
+			const rid = navigation.getParam('rid');
+			try {
+				setLoadingInvite(true);
+				await RocketChat.addUsersToRoom(rid);
+				navigation.pop();
+			} catch (e) {
+				log('err_add_user', e);
+			} finally {
+				setLoadingInvite(false);
+			}
+		}
+	}
+
+	// eslint-disable-next-line react/sort-comp
 	updateState = debounce(() => {
 		this.forceUpdate();
 	}, 1000);
 
-	async search(text) {
-		const searchText = text.trim();
-		if (searchText === '') {
-			delete this.oldPromise;
-			return this.setState({
-				search: []
-			});
-		}
+	search = async(text) => {
+		const result = await RocketChat.search({ text, filterRooms: false });
+		this.setState({
+			search: result
+		});
+	}
 
-		let data = this.data.filtered('name CONTAINS[c] $0 AND t = $1', searchText, 'd').slice(0, 7);
-
-		const usernames = data.map(sub => sub.map);
-		try {
-			if (data.length < 7) {
-				if (this.oldPromise) {
-					this.oldPromise('cancel');
-				}
-
-				const { users } = await Promise.race([
-					RocketChat.spotlight(searchText, usernames, { users: true, rooms: false }),
-					new Promise((resolve, reject) => this.oldPromise = reject)
-				]);
-
-				data = users.map(user => ({
-					...user,
-					rid: user.username,
-					name: user.username,
-					t: 'd',
-					search: true
-				}));
-
-				delete this.oldPromise;
-			}
-			this.setState({
-				search: data
-			});
-		} catch (e) {
-			// alert(JSON.stringify(e));
-		}
+	isChecked = (username) => {
+		const { users } = this.props;
+		return users.findIndex(el => el.name === username) !== -1;
 	}
 
 	toggleUser = (user) => {
+		const { addUser, removeUser } = this.props;
+
 		LayoutAnimation.easeInEaseOut();
-		const index = this.props.users.findIndex(el => el.name === user.name);
-		if (index === -1) {
-			this.props.addUser(user);
+		if (!this.isChecked(user.name)) {
+			addUser(user);
 		} else {
-			this.props.removeUser(user);
+			removeUser(user);
 		}
-	};
+	}
 
 	_onPressItem = (id, item = {}) => {
 		if (item.search) {
-			this.toggleUser({ _id: item._id, name: item.username });
+			this.toggleUser({ _id: item._id, name: item.username, fname: item.name });
 		} else {
-			this.toggleUser({ _id: item._id, name: item.name });
+			this.toggleUser({ _id: item._id, name: item.name, fname: item.fname });
 		}
-	};
+	}
 
 	_onPressSelectedItem = item => this.toggleUser(item);
 
-	nextAction = () => {
-		const params = this.props.navigation.state.params || {};
-		params.nextAction();
-	};
-
 	renderHeader = () => (
-		<View style={styles.container}>
-			{this.renderSearchBar()}
+		<View style={styles.header}>
+			<SearchBox onChangeText={text => this.onSearchChangeText(text)} testID='select-users-view-search' />
 			{this.renderSelected()}
 		</View>
-	);
+	)
 
-	renderSearchBar = () => (
-		<View style={styles.searchBoxView}>
-			<TextInput
-				underlineColorAndroid='transparent'
-				style={styles.searchBox}
-				onChangeText={text => this.onSearchChangeText(text)}
-				returnKeyType='search'
-				placeholder={I18n.t('Search')}
-				clearButtonMode='while-editing'
-				blurOnSubmit
-				testID='select-users-view-search'
-				autoCorrect={false}
-				autoCapitalize='none'
-			/>
-		</View>
-	);
 	renderSelected = () => {
-		if (this.props.users.length === 0) {
+		const { users } = this.props;
+
+		if (users.length === 0) {
 			return null;
 		}
 		return (
 			<FlatList
-				data={this.props.users}
+				data={users}
 				keyExtractor={item => item._id}
-				style={styles.list}
+				style={[styles.list, sharedStyles.separatorTop]}
+				contentContainerStyle={{ marginVertical: 5 }}
 				renderItem={this.renderSelectedItem}
 				enableEmptySections
 				keyboardShouldPersistTaps='always'
 				horizontal
 			/>
 		);
-	};
-	renderSelectedItem = ({ item }) => (
-		<TouchableOpacity
-			key={item._id}
-			style={styles.selectItemView}
-			onPress={() => this._onPressSelectedItem(item)}
-			testID={`selected-user-${ item.name }`}
-		>
-			<Avatar text={item.name} size={40} />
-			<Text ellipsizeMode='tail' numberOfLines={1} style={{ fontSize: 10 }}>
-				{item.name}
-			</Text>
-		</TouchableOpacity>
-	);
-	renderItem = ({ item }) => (
-		<RoomItem
-			key={item._id}
-			name={item.name}
-			type={item.t}
-			baseUrl={this.props.Site_Url}
-			onPress={() => this._onPressItem(item._id, item)}
-			id={item.rid.replace(this.props.user.id, '').trim()}
-			showLastMessage={false}
-			avatarSize={30}
-			statusStyle={styles.status}
-			testID={`select-users-view-item-${ item.name }`}
-		/>
-	);
-	renderList = () => (
-		<FlatList
-			data={this.state.search.length > 0 ? this.state.search : this.data}
-			extraData={this.props}
-			keyExtractor={item => item._id}
-			style={styles.list}
-			renderItem={this.renderItem}
-			ListHeaderComponent={this.renderHeader}
-			enableEmptySections
-			keyboardShouldPersistTaps='always'
-		/>
-	);
-	renderCreateButton = () => {
-		if (this.props.users.length === 0 || Platform.OS === 'ios') {
-			return null;
-		}
+	}
+
+	renderSelectedItem = ({ item }) => {
+		const { baseUrl, user } = this.props;
 		return (
-			<ActionButton
-				buttonColor='rgba(67, 165, 71, 1)'
-				onPress={() => this.nextAction()}
-				renderIcon={() => <Icon name='md-arrow-forward' style={styles.actionButtonIcon} />}
+			<UserItem
+				name={item.fname}
+				username={item.name}
+				onPress={() => this._onPressSelectedItem(item)}
+				testID={`selected-user-${ item.name }`}
+				baseUrl={baseUrl}
+				style={{ paddingRight: 15 }}
+				user={user}
 			/>
 		);
-	};
-	render = () => (
-		<View style={styles.container} testID='select-users-view'>
-			<SafeAreaView style={styles.safeAreaView}>
+	}
+
+	renderSeparator = () => <View style={[sharedStyles.separator, styles.separator]} />
+
+	renderItem = ({ item, index }) => {
+		const { search } = this.state;
+		const { baseUrl, user } = this.props;
+
+		const name = item.search ? item.name : item.fname;
+		const username = item.search ? item.username : item.name;
+		let style = {};
+		if (index === 0) {
+			style = { ...sharedStyles.separatorTop };
+		}
+		if (search.length > 0 && index === search.length - 1) {
+			style = { ...style, ...sharedStyles.separatorBottom };
+		}
+		if (search.length === 0 && index === this.data.length - 1) {
+			style = { ...style, ...sharedStyles.separatorBottom };
+		}
+		return (
+			<UserItem
+				name={name}
+				username={username}
+				onPress={() => this._onPressItem(item._id, item)}
+				testID={`select-users-view-item-${ item.name }`}
+				icon={this.isChecked(username) ? 'check' : null}
+				baseUrl={baseUrl}
+				style={style}
+				user={user}
+			/>
+		);
+	}
+
+	renderList = () => {
+		const { search } = this.state;
+		return (
+			<FlatList
+				data={search.length > 0 ? search : this.data}
+				extraData={this.props}
+				keyExtractor={item => item._id}
+				renderItem={this.renderItem}
+				ItemSeparatorComponent={this.renderSeparator}
+				ListHeaderComponent={this.renderHeader}
+				enableEmptySections
+				keyboardShouldPersistTaps='always'
+			/>
+		);
+	}
+
+	render = () => {
+		const { loading } = this.props;
+		return (
+			<SafeAreaView style={styles.safeAreaView} testID='select-users-view' forceInset={{ vertical: 'never' }}>
+				<StatusBar />
 				{this.renderList()}
-				{this.renderCreateButton()}
-				<Loading visible={this.props.loading} />
+				<Loading visible={loading} />
 			</SafeAreaView>
-		</View>
-	);
+		);
+	}
 }
+
+const mapStateToProps = state => ({
+	baseUrl: state.settings.Site_Url || state.server ? state.server.server : '',
+	users: state.selectedUsers.users,
+	loading: state.selectedUsers.loading,
+	user: {
+		id: state.login.user && state.login.user.id,
+		token: state.login.user && state.login.user.token
+	}
+});
+
+const mapDispatchToProps = dispatch => ({
+	addUser: user => dispatch(addUserAction(user)),
+	removeUser: user => dispatch(removeUserAction(user)),
+	reset: () => dispatch(resetAction()),
+	setLoadingInvite: loading => dispatch(setLoadingAction(loading))
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(SelectedUsersView);

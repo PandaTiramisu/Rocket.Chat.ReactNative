@@ -1,24 +1,23 @@
-import Random from 'react-native-meteor/lib/Random';
-
 import messagesStatus from '../../constants/messagesStatus';
-import buildMessage from '../methods/helpers/buildMessage';
-import { post } from './helpers/rest';
+import buildMessage from './helpers/buildMessage';
 import database from '../realm';
-import reduxStore from '../createStore';
 import log from '../../utils/log';
+import random from '../../utils/random';
 
-export const getMessage = (rid, msg = {}) => {
-	const _id = Random.id();
+export const getMessage = (rid, msg = '', tmid, user) => {
+	const _id = random(17);
+	const { id, username } = user;
 	const message = {
 		_id,
 		rid,
 		msg,
+		tmid,
 		ts: new Date(),
 		_updatedAt: new Date(),
 		status: messagesStatus.TEMP,
 		u: {
-			_id: reduxStore.getState().login.user.id || '1',
-			username: reduxStore.getState().login.user.username
+			_id: id || '1',
+			username
 		}
 	};
 	try {
@@ -31,47 +30,42 @@ export const getMessage = (rid, msg = {}) => {
 	return message;
 };
 
-function sendMessageByRest(message) {
-	const { token, id } = this.ddp._login;
-	const server = this.ddp.url.replace('ws', 'http');
-	const { _id, rid, msg } = message;
-	return post({ token, id, server }, 'chat.sendMessage', { message: { _id, rid, msg } });
+export async function sendMessageCall(message) {
+	const {
+		_id, rid, msg, tmid
+	} = message;
+	// RC 0.60.0
+	const data = await this.sdk.post('chat.sendMessage', {
+		message: {
+			_id, rid, msg, tmid
+		}
+	});
+	return data;
 }
 
-function sendMessageByDDP(message) {
-	const { _id, rid, msg } = message;
-	return this.ddp.call('sendMessage', { _id, rid, msg });
-}
-
-export async function _sendMessageCall(message) {
+export default async function(rid, msg, tmid, user) {
 	try {
-		// eslint-disable-next-line
-		const data = await (false && this.ddp.status ? sendMessageByDDP.call(this, message) : sendMessageByRest.call(this, message));
-		return data;
+		const message = getMessage(rid, msg, tmid, user);
+		const [room] = database.objects('subscriptions').filtered('rid == $0', rid);
+
+		if (room) {
+			database.write(() => {
+				room.draftMessage = null;
+			});
+		}
+
+		try {
+			const ret = await sendMessageCall.call(this, message);
+			database.write(() => {
+				database.create('messages', buildMessage({ ...message, ...ret }), true);
+			});
+		} catch (e) {
+			database.write(() => {
+				message.status = messagesStatus.ERROR;
+				database.create('messages', message, true);
+			});
+		}
 	} catch (e) {
-		database.write(() => {
-			message.status = messagesStatus.ERROR;
-			database.create('messages', message, true);
-		});
-	}
-}
-
-export default async function(rid, msg) {
-	const { database: db } = database;
-	try {
-		const message = getMessage(rid, msg);
-		const room = db.objects('subscriptions').filtered('rid == $0', rid);
-
-		db.write(() => {
-			room.lastMessage = message;
-		});
-
-		const ret = await _sendMessageCall.call(this, message);
-		// TODO: maybe I have created a bug in the future here <3
-		db.write(() => {
-			db.create('messages', buildMessage({ ...message, ...ret }), true);
-		});
-	} catch (e) {
-		log('sendMessage', e);
+		log('err_send_message', e);
 	}
 }

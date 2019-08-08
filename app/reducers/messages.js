@@ -1,12 +1,11 @@
 import * as types from '../actions/actionsTypes';
 
 const initialState = {
-	isFetching: false,
-	failure: false,
 	message: {},
 	actionMessage: {},
+	replyMessage: {},
+	replying: false,
 	editing: false,
-	permalink: '',
 	showActions: false,
 	showErrorActions: false,
 	showReactionPicker: false
@@ -14,23 +13,6 @@ const initialState = {
 
 export default function messages(state = initialState, action) {
 	switch (action.type) {
-		case types.MESSAGES.REQUEST:
-			return {
-				...state,
-				isFetching: true
-			};
-		case types.MESSAGES.SUCCESS:
-			return {
-				...state,
-				isFetching: false
-			};
-		case types.LOGIN.FAILURE:
-			return {
-				...state,
-				isFetching: false,
-				failure: true,
-				errorMessage: action.err
-			};
 		case types.MESSAGES.ACTIONS_SHOW:
 			return {
 				...state,
@@ -77,15 +59,20 @@ export default function messages(state = initialState, action) {
 				message: {},
 				editing: false
 			};
-		case types.MESSAGES.PERMALINK_SUCCESS:
+		case types.MESSAGES.REPLY_INIT:
 			return {
 				...state,
-				permalink: action.permalink
+				replyMessage: {
+					...action.message,
+					mention: action.mention
+				},
+				replying: true
 			};
-		case types.MESSAGES.PERMALINK_CLEAR:
+		case types.MESSAGES.REPLY_CANCEL:
 			return {
 				...state,
-				permalink: ''
+				replyMessage: {},
+				replying: false
 			};
 		case types.MESSAGES.SET_INPUT:
 			return {

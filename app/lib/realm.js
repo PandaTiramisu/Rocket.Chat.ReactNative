@@ -1,15 +1,36 @@
 import Realm from 'realm';
+import RNRealmPath from 'react-native-realm-path';
 
 // import { AsyncStorage } from 'react-native';
 // Realm.clearTestState();
 // AsyncStorage.clear();
+
+const userSchema = {
+	name: 'user',
+	primaryKey: 'id',
+	properties: {
+		id: 'string',
+		token: { type: 'string', optional: true },
+		username: { type: 'string', optional: true },
+		name: { type: 'string', optional: true },
+		language: { type: 'string', optional: true },
+		status: { type: 'string', optional: true },
+		roles: { type: 'string[]', optional: true }
+	}
+};
 
 const serversSchema = {
 	name: 'servers',
 	primaryKey: 'id',
 	properties: {
 		id: 'string',
-		current: 'bool'
+		name: { type: 'string', optional: true },
+		iconURL: { type: 'string', optional: true },
+		useRealName: { type: 'bool', optional: true },
+		FileUpload_MediaTypeWhiteList: { type: 'string', optional: true },
+		FileUpload_MaxFileSize: { type: 'int', optional: true },
+		roomsUpdatedAt: { type: 'date', optional: true },
+		version: 'string?'
 	}
 };
 
@@ -21,16 +42,7 @@ const settingsSchema = {
 		valueAsString: { type: 'string', optional: true },
 		valueAsBoolean: { type: 'bool', optional: true },
 		valueAsNumber: { type: 'int', optional: true },
-
 		_updatedAt: { type: 'date', optional: true }
-	}
-};
-
-const permissionsRolesSchema = {
-	name: 'permissionsRoles',
-	primaryKey: 'value',
-	properties: {
-		value: 'string'
 	}
 };
 
@@ -39,7 +51,7 @@ const permissionsSchema = {
 	primaryKey: '_id',
 	properties: {
 		_id: 'string',
-		roles: { type: 'list', objectType: 'permissionsRoles' },
+		roles: 'string[]',
 		_updatedAt: { type: 'date', optional: true }
 	}
 };
@@ -49,23 +61,8 @@ const roomsSchema = {
 	primaryKey: '_id',
 	properties: {
 		_id: 'string',
+		name: 'string?',
 		broadcast: { type: 'bool', optional: true }
-	}
-};
-
-const subscriptionRolesSchema = {
-	name: 'subscriptionRolesSchema',
-	primaryKey: 'value',
-	properties: {
-		value: 'string'
-	}
-};
-
-const userMutedInRoomSchema = {
-	name: 'usersMuted',
-	primaryKey: 'value',
-	properties: {
-		value: 'string'
 	}
 };
 
@@ -83,7 +80,7 @@ const subscriptionSchema = {
 		rid: { type: 'string', indexed: true },
 		open: { type: 'bool', optional: true },
 		alert: { type: 'bool', optional: true },
-		roles: { type: 'list', objectType: 'subscriptionRolesSchema' },
+		roles: 'string[]',
 		unread: { type: 'int', optional: true },
 		userMentions: { type: 'int', optional: true },
 		roomUpdatedAt: { type: 'date', optional: true },
@@ -99,18 +96,23 @@ const subscriptionSchema = {
 		archived: { type: 'bool', optional: true },
 		joinCodeRequired: { type: 'bool', optional: true },
 		notifications: { type: 'bool', optional: true },
-		muted: { type: 'list', objectType: 'usersMuted' },
-		broadcast: { type: 'bool', optional: true }
+		muted: 'string[]',
+		broadcast: { type: 'bool', optional: true },
+		prid: { type: 'string', optional: true },
+		draftMessage: { type: 'string', optional: true },
+		lastThreadSync: 'date?',
+		autoTranslate: 'bool?',
+		autoTranslateLanguage: 'string?'
 	}
 };
 
 const usersSchema = {
 	name: 'users',
-	primaryKey: 'username',
+	primaryKey: '_id',
 	properties: {
+		_id: 'string',
 		username: 'string',
-		name: { type: 'string', optional: true },
-		avatarVersion: { type: 'int', optional: true }
+		name: { type: 'string', optional: true }
 	}
 };
 
@@ -138,7 +140,7 @@ const attachment = {
 		video_url: { type: 'string', optional: true },
 		title: { type: 'string', optional: true },
 		title_link: { type: 'string', optional: true },
-		title_link_download: { type: 'bool', optional: true },
+		// title_link_download: { type: 'bool', optional: true },
 		type: { type: 'string', optional: true },
 		author_icon: { type: 'string', optional: true },
 		author_name: { type: 'string', optional: true },
@@ -165,20 +167,23 @@ const url = {
 	}
 };
 
-const messagesReactionsUsernamesSchema = {
-	name: 'messagesReactionsUsernames',
-	primaryKey: 'value',
+const messagesReactionsSchema = {
+	name: 'messagesReactions',
+	primaryKey: '_id',
 	properties: {
-		value: 'string'
+		_id: 'string',
+		emoji: 'string',
+		usernames: 'string[]'
 	}
 };
 
-const messagesReactionsSchema = {
-	name: 'messagesReactions',
-	primaryKey: 'emoji',
+const messagesTranslationsSchema = {
+	name: 'messagesTranslations',
+	primaryKey: '_id',
 	properties: {
-		emoji: 'string',
-		usernames: { type: 'list', objectType: 'messagesReactionsUsernames' }
+		_id: 'string',
+		language: 'string',
+		value: 'string'
 	}
 };
 
@@ -201,8 +206,6 @@ const messagesSchema = {
 		rid: { type: 'string', indexed: true },
 		ts: 'date',
 		u: 'users',
-		// mentions: [],
-		// channels: [],
 		alias: { type: 'string', optional: true },
 		parseUrls: { type: 'bool', optional: true },
 		groupable: { type: 'bool', optional: true },
@@ -215,7 +218,90 @@ const messagesSchema = {
 		starred: { type: 'bool', optional: true },
 		editedBy: 'messagesEditedBy',
 		reactions: { type: 'list', objectType: 'messagesReactions' },
-		role: { type: 'string', optional: true }
+		role: { type: 'string', optional: true },
+		drid: { type: 'string', optional: true },
+		dcount: { type: 'int', optional: true },
+		dlm: { type: 'date', optional: true },
+		tmid: { type: 'string', optional: true },
+		tcount: { type: 'int', optional: true },
+		tlm: { type: 'date', optional: true },
+		replies: 'string[]',
+		mentions: { type: 'list', objectType: 'users' },
+		channels: { type: 'list', objectType: 'rooms' },
+		unread: { type: 'bool', optional: true },
+		autoTranslate: { type: 'bool', default: false },
+		translations: { type: 'list', objectType: 'messagesTranslations' }
+	}
+};
+
+const threadsSchema = {
+	name: 'threads',
+	primaryKey: '_id',
+	properties: {
+		_id: 'string',
+		msg: { type: 'string', optional: true },
+		t: { type: 'string', optional: true },
+		rid: { type: 'string', indexed: true },
+		ts: 'date',
+		u: 'users',
+		alias: { type: 'string', optional: true },
+		parseUrls: { type: 'bool', optional: true },
+		groupable: { type: 'bool', optional: true },
+		avatar: { type: 'string', optional: true },
+		attachments: { type: 'list', objectType: 'attachment' },
+		urls: { type: 'list', objectType: 'url', default: [] },
+		_updatedAt: { type: 'date', optional: true },
+		status: { type: 'int', optional: true },
+		pinned: { type: 'bool', optional: true },
+		starred: { type: 'bool', optional: true },
+		editedBy: 'messagesEditedBy',
+		reactions: { type: 'list', objectType: 'messagesReactions' },
+		role: { type: 'string', optional: true },
+		drid: { type: 'string', optional: true },
+		dcount: { type: 'int', optional: true },
+		dlm: { type: 'date', optional: true },
+		tmid: { type: 'string', optional: true },
+		tcount: { type: 'int', optional: true },
+		tlm: { type: 'date', optional: true },
+		replies: 'string[]',
+		mentions: { type: 'list', objectType: 'users' },
+		channels: { type: 'list', objectType: 'rooms' },
+		unread: { type: 'bool', optional: true },
+		autoTranslate: { type: 'bool', default: false },
+		translations: { type: 'list', objectType: 'messagesTranslations' },
+		draftMessage: 'string?'
+	}
+};
+
+const threadMessagesSchema = {
+	name: 'threadMessages',
+	primaryKey: '_id',
+	properties: {
+		_id: 'string',
+		msg: { type: 'string', optional: true },
+		t: { type: 'string', optional: true },
+		rid: { type: 'string', indexed: true },
+		ts: 'date',
+		u: 'users',
+		alias: { type: 'string', optional: true },
+		parseUrls: { type: 'bool', optional: true },
+		groupable: { type: 'bool', optional: true },
+		avatar: { type: 'string', optional: true },
+		attachments: { type: 'list', objectType: 'attachment' },
+		urls: { type: 'list', objectType: 'url', default: [] },
+		_updatedAt: { type: 'date', optional: true },
+		status: { type: 'int', optional: true },
+		pinned: { type: 'bool', optional: true },
+		starred: { type: 'bool', optional: true },
+		editedBy: 'messagesEditedBy',
+		reactions: { type: 'list', objectType: 'messagesReactions' },
+		role: { type: 'string', optional: true },
+		replies: 'string[]',
+		mentions: { type: 'list', objectType: 'users' },
+		channels: { type: 'list', objectType: 'rooms' },
+		unread: { type: 'bool', optional: true },
+		autoTranslate: { type: 'bool', default: false },
+		translations: { type: 'list', objectType: 'messagesTranslations' }
 	}
 };
 
@@ -230,11 +316,15 @@ const frequentlyUsedEmojiSchema = {
 	}
 };
 
-const customEmojiAliasesSchema = {
-	name: 'customEmojiAliases',
-	primaryKey: 'value',
+const slashCommandSchema = {
+	name: 'slashCommand',
+	primaryKey: 'command',
 	properties: {
-		value: 'string'
+		command: 'string',
+		params: { type: 'string', optional: true },
+		description: { type: 'string', optional: true },
+		clientOnly: { type: 'bool', optional: true },
+		providesPreview: { type: 'bool', optional: true }
 	}
 };
 
@@ -244,7 +334,7 @@ const customEmojisSchema = {
 	properties: {
 		_id: 'string',
 		name: 'string',
-		aliases: { type: 'list', objectType: 'customEmojiAliases' },
+		aliases: 'string[]',
 		extension: 'string',
 		_updatedAt: { type: 'date', optional: true }
 	}
@@ -259,108 +349,169 @@ const rolesSchema = {
 	}
 };
 
+const uploadsSchema = {
+	name: 'uploads',
+	primaryKey: 'path',
+	properties: {
+		path: 'string',
+		rid: 'string',
+		name: { type: 'string', optional: true },
+		description: { type: 'string', optional: true },
+		size: { type: 'int', optional: true },
+		type: { type: 'string', optional: true },
+		store: { type: 'string', optional: true },
+		progress: { type: 'int', default: 1 },
+		error: { type: 'bool', default: false }
+	}
+};
+
+const usersTypingSchema = {
+	name: 'usersTyping',
+	properties: {
+		rid: { type: 'string', indexed: true },
+		username: { type: 'string', optional: true }
+	}
+};
+
+const activeUsersSchema = {
+	name: 'activeUsers',
+	primaryKey: 'id',
+	properties: {
+		id: 'string',
+		name: 'string?',
+		username: 'string?',
+		status: 'string?',
+		utcOffset: 'double?'
+	}
+};
+
 const schema = [
 	settingsSchema,
 	subscriptionSchema,
-	subscriptionRolesSchema,
 	messagesSchema,
+	threadsSchema,
+	threadMessagesSchema,
 	usersSchema,
 	roomsSchema,
 	attachment,
 	attachmentFields,
 	messagesEditedBySchema,
 	permissionsSchema,
-	permissionsRolesSchema,
 	url,
 	frequentlyUsedEmojiSchema,
-	customEmojiAliasesSchema,
 	customEmojisSchema,
 	messagesReactionsSchema,
-	messagesReactionsUsernamesSchema,
 	rolesSchema,
-	userMutedInRoomSchema
+	uploadsSchema,
+	slashCommandSchema,
+	messagesTranslationsSchema
 ];
 
-// class DebouncedDb {
-// 	constructor(db) {
-// 		this.database = db;
-// 	}
-// 	deleteAll(...args) {
-// 		return this.database.write(() => this.database.deleteAll(...args));
-// 	}
-// 	delete(...args) {
-// 		return this.database.delete(...args);
-// 	}
-// 	write(fn) {
-// 		return fn();
-// 	}
-// 	create(...args) {
-// 		this.queue = this.queue || [];
-// 		if (this.timer) {
-// 			clearTimeout(this.timer);
-// 			this.timer = null;
-// 		}
-// 		this.timer = setTimeout(() => {
-// 			alert(this.queue.length);
-// 			this.database.write(() => {
-// 				this.queue.forEach(({ db, args }) => this.database.create(...args));
-// 			});
-//
-// 			this.timer = null;
-// 			return this.roles = [];
-// 		}, 1000);
-//
-// 		this.queue.push({
-// 			db: this.database,
-// 			args
-// 		});
-// 	}
-// 	objects(...args) {
-// 		return this.database.objects(...args);
-// 	}
-// }
+const inMemorySchema = [usersTypingSchema, activeUsersSchema];
+
 class DB {
 	databases = {
 		serversDB: new Realm({
-			path: 'default.realm',
+			path: `${ RNRealmPath.realmPath }default.realm`,
 			schema: [
+				userSchema,
 				serversSchema
 			],
-			deleteRealmIfMigrationNeeded: true
+			schemaVersion: 10,
+			migration: (oldRealm, newRealm) => {
+				if (oldRealm.schemaVersion >= 1 && newRealm.schemaVersion <= 9) {
+					const newServers = newRealm.objects('servers');
+
+					// eslint-disable-next-line no-plusplus
+					for (let i = 0; i < newServers.length; i++) {
+						newServers[i].roomsUpdatedAt = null;
+					}
+				}
+			}
+		}),
+		inMemoryDB: new Realm({
+			path: `${ RNRealmPath.realmPath }memory.realm`,
+			schema: inMemorySchema,
+			schemaVersion: 2,
+			inMemory: true
 		})
-	};
+	}
+
 	deleteAll(...args) {
 		return this.database.write(() => this.database.deleteAll(...args));
 	}
+
 	delete(...args) {
 		return this.database.delete(...args);
 	}
+
 	write(...args) {
 		return this.database.write(...args);
 	}
+
 	create(...args) {
 		return this.database.create(...args);
 	}
+
 	objects(...args) {
 		return this.database.objects(...args);
 	}
+
+	objectForPrimaryKey(...args) {
+		return this.database.objectForPrimaryKey(...args);
+	}
+
 	get database() {
 		return this.databases.activeDB;
+	}
+
+	get memoryDatabase() {
+		return this.databases.inMemoryDB;
 	}
 
 	setActiveDB(database = '') {
 		const path = database.replace(/(^\w+:|^)\/\//, '');
 		return this.databases.activeDB = new Realm({
-			path: `${ path }.realm`,
+			path: `${ RNRealmPath.realmPath }${ path }.realm`,
 			schema,
-			deleteRealmIfMigrationNeeded: true
+			schemaVersion: 13,
+			migration: (oldRealm, newRealm) => {
+				if (oldRealm.schemaVersion >= 3 && newRealm.schemaVersion <= 13) {
+					const newSubs = newRealm.objects('subscriptions');
+					newRealm.delete(newSubs);
+					const newMessages = newRealm.objects('messages');
+					newRealm.delete(newMessages);
+					const newThreads = newRealm.objects('threads');
+					newRealm.delete(newThreads);
+					const newThreadMessages = newRealm.objects('threadMessages');
+					newRealm.delete(newThreadMessages);
+				}
+				if (newRealm.schemaVersion === 9) {
+					const newEmojis = newRealm.objects('customEmojis');
+					newRealm.delete(newEmojis);
+					const newSettings = newRealm.objects('settings');
+					newRealm.delete(newSettings);
+				}
+			}
 		});
 	}
 }
-export default new DB();
+const db = new DB();
+export default db;
 
-// realm.write(() => {
-// 	realm.create('servers', { id: 'https://open.rocket.chat', current: false }, true);
-// 	realm.create('servers', { id: 'http://localhost:3000', current: false }, true);
-// 	realm.create('servers', { id: 'http://10.0.2.2:3000', current: false }, true);
-// });
+// Realm workaround for "Cannot create asynchronous query while in a write transaction"
+// inpired from https://github.com/realm/realm-js/issues/1188#issuecomment-359223918
+export function safeAddListener(results, callback, database = db) {
+	if (!results || !results.addListener) {
+		console.log('⚠️ safeAddListener called for non addListener-compliant object');
+		return;
+	}
+
+	if (database.isInTransaction) {
+		setTimeout(() => {
+			safeAddListener(results, callback);
+		}, 50);
+	} else {
+		results.addListener(callback);
+	}
+}

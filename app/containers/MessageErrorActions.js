@@ -1,30 +1,34 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import { connect } from 'react-redux';
-import ActionSheet from 'react-native-actionsheet';
+import ActionSheet from 'react-native-action-sheet';
 
-import { errorActionsHide } from '../actions/messages';
+import { errorActionsHide as errorActionsHideAction } from '../actions/messages';
 import RocketChat from '../lib/rocketchat';
 import database from '../lib/realm';
 import protectedFunction from '../lib/methods/helpers/protectedFunction';
 import I18n from '../i18n';
 
-@connect(
-	state => ({
-		showErrorActions: state.messages.showErrorActions,
-		actionMessage: state.messages.actionMessage
-	}),
-	dispatch => ({
-		errorActionsHide: () => dispatch(errorActionsHide())
-	})
-)
-export default class MessageErrorActions extends React.Component {
+class MessageErrorActions extends React.Component {
 	static propTypes = {
 		errorActionsHide: PropTypes.func.isRequired,
-		showErrorActions: PropTypes.bool.isRequired,
 		actionMessage: PropTypes.object
 	};
 
+	handleResend = protectedFunction(() => {
+		const { actionMessage } = this.props;
+		RocketChat.resendMessage(actionMessage._id);
+	});
+
+	handleDelete = protectedFunction(() => {
+		const { actionMessage } = this.props;
+		database.write(() => {
+			const msg = database.objects('messages').filtered('_id = $0', actionMessage._id);
+			database.delete(msg);
+		});
+	})
+
+	// eslint-disable-next-line react/sort-comp
 	constructor(props) {
 		super(props);
 		this.handleActionPress = this.handleActionPress.bind(this);
@@ -32,24 +36,24 @@ export default class MessageErrorActions extends React.Component {
 		this.CANCEL_INDEX = 0;
 		this.DELETE_INDEX = 1;
 		this.RESEND_INDEX = 2;
-	}
-
-	componentWillReceiveProps(nextProps) {
-		if (nextProps.showErrorActions !== this.props.showErrorActions && nextProps.showErrorActions) {
-			this.ActionSheet.show();
-		}
-	}
-
-	handleResend = protectedFunction(() => RocketChat.resendMessage(this.props.actionMessage._id));
-
-	handleDelete = protectedFunction(() => {
-		database.write(() => {
-			const msg = database.objects('messages').filtered('_id = $0', this.props.actionMessage._id);
-			database.delete(msg);
+		setTimeout(() => {
+			this.showActionSheet();
 		});
-	})
+	}
+
+	showActionSheet = () => {
+		ActionSheet.showActionSheetWithOptions({
+			options: this.options,
+			cancelButtonIndex: this.CANCEL_INDEX,
+			destructiveButtonIndex: this.DELETE_INDEX,
+			title: I18n.t('Message_actions')
+		}, (actionIndex) => {
+			this.handleActionPress(actionIndex);
+		});
+	}
 
 	handleActionPress = (actionIndex) => {
+		const { errorActionsHide } = this.props;
 		switch (actionIndex) {
 			case this.RESEND_INDEX:
 				this.handleResend();
@@ -60,19 +64,22 @@ export default class MessageErrorActions extends React.Component {
 			default:
 				break;
 		}
-		this.props.errorActionsHide();
+		errorActionsHide();
 	}
 
 	render() {
 		return (
-			<ActionSheet
-				ref={o => this.ActionSheet = o}
-				title={I18n.t('Message_actions')}
-				options={this.options}
-				cancelButtonIndex={this.CANCEL_INDEX}
-				destructiveButtonIndex={this.DELETE_INDEX}
-				onPress={this.handleActionPress}
-			/>
+			null
 		);
 	}
 }
+
+const mapStateToProps = state => ({
+	actionMessage: state.messages.actionMessage
+});
+
+const mapDispatchToProps = dispatch => ({
+	errorActionsHide: () => dispatch(errorActionsHideAction())
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(MessageErrorActions);

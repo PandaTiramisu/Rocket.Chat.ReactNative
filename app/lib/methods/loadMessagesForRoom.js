@@ -1,53 +1,67 @@
 import { InteractionManager } from 'react-native';
 
-import { get } from './helpers/rest';
 import buildMessage from './helpers/buildMessage';
 import database from '../realm';
 import log from '../../utils/log';
 
-// TODO: api fix
-const types = {
-	c: 'channels', d: 'im', p: 'groups'
-};
+async function load({ rid: roomId, latest, t }) {
+	if (t === 'l') {
+		try {
+			// RC 0.51.0
+			const data = await this.sdk.methodCall('loadHistory', roomId, null, 50, latest);
+			if (!data || data.status === 'error') {
+				return [];
+			}
+			return data.messages;
+		} catch (error) {
+			console.log(error);
+			return [];
+		}
+	}
 
-async function loadMessagesForRoomRest({ rid: roomId, latest, t }) {
-	const { token, id } = this.ddp._login;
-	const server = this.ddp.url.replace('ws', 'http');
-	const data = await get({ token, id, server }, `${ types[t] }.history`, { roomId, latest });
+	let params = { roomId, count: 50 };
+	if (latest) {
+		params = { ...params, latest: new Date(latest).toISOString() };
+	}
+	// RC 0.48.0
+	const data = await this.sdk.get(`${ this.roomTypeToApiType(t) }.history`, params);
+	if (!data || data.status === 'error') {
+		return [];
+	}
 	return data.messages;
 }
 
-async function loadMessagesForRoomDDP(...args) {
-	const [{ rid: roomId, latest }] = args;
-	try {
-		const data = await this.ddp.call('loadHistory', roomId, latest, 50);
-		if (!data || !data.messages.length) {
-			return [];
-		}
-		return data.messages;
-	} catch (e) {
-		console.warn('loadMessagesForRoomDDP', e);
-		return loadMessagesForRoomRest.call(this, ...args);
-	}
-}
-
-export default async function loadMessagesForRoom(...args) {
-	const { database: db } = database;
-
+export default function loadMessagesForRoom(...args) {
 	return new Promise(async(resolve, reject) => {
 		try {
-			// eslint-disable-next-line
-			const data = (await (false && this.ddp.status ? loadMessagesForRoomDDP.call(this, ...args) : loadMessagesForRoomRest.call(this, ...args))).map(buildMessage);
+			const data = await load.call(this, ...args);
+
 			if (data && data.length) {
 				InteractionManager.runAfterInteractions(() => {
-					db.write(() => data.forEach(message => db.create('messages', message, true)));
+					database.write(() => data.forEach((message) => {
+						message = buildMessage(message);
+						try {
+							database.create('messages', message, true);
+							// if it's a thread "header"
+							if (message.tlm) {
+								database.create('threads', message, true);
+							}
+							// if it belongs to a thread
+							if (message.tmid) {
+								message.rid = message.tmid;
+								database.create('threadMessages', message, true);
+							}
+						} catch (e) {
+							log('err_load_messages_for_room_create', e);
+						}
+					}));
 					return resolve(data);
 				});
 			} else {
 				return resolve([]);
 			}
 		} catch (e) {
-			log('loadMessagesForRoom', e);
+			log('err_load_messages_for_room', e);
 			reject(e);
 		}
 	});

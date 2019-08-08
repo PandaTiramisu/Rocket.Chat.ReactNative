@@ -1,7 +1,15 @@
+import EJSON from 'ejson';
+
 import normalizeMessage from './normalizeMessage';
 // TODO: delete and update
 
 export const merge = (subscription, room) => {
+	subscription = EJSON.fromJSONValue(subscription);
+	room = EJSON.fromJSONValue(room);
+
+	if (!subscription) {
+		return;
+	}
 	if (room) {
 		if (room.rid) {
 			subscription.rid = room.rid;
@@ -16,21 +24,24 @@ export const merge = (subscription, room) => {
 		subscription.archived = room.archived;
 		subscription.joinCodeRequired = room.joinCodeRequired;
 		subscription.broadcast = room.broadcast;
-
+		if (!subscription.roles || !subscription.roles.length) {
+			subscription.roles = [];
+		}
 		if (room.muted && room.muted.length) {
-			subscription.muted = room.muted.filter(user => user).map(user => ({ value: user }));
+			subscription.muted = room.muted.filter(muted => !!muted);
 		} else {
 			subscription.muted = [];
 		}
-	}
-	if (subscription.roles && subscription.roles.length) {
-		subscription.roles = subscription.roles.map(role => (role.value ? role : { value: role }));
 	}
 
 	if (subscription.mobilePushNotifications === 'nothing') {
 		subscription.notifications = true;
 	} else {
 		subscription.notifications = false;
+	}
+
+	if (!subscription.name) {
+		subscription.name = subscription.fname;
 	}
 
 	subscription.blocker = !!subscription.blocker;

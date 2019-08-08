@@ -1,45 +1,28 @@
-import { delay } from 'redux-saga';
-import { takeLatest, put, call, select } from 'redux-saga/effects';
+import {
+	takeLatest, put, call, delay
+} from 'redux-saga/effects';
+
+import Navigation from '../lib/Navigation';
 import { MESSAGES } from '../actions/actionsTypes';
 import {
-	messagesSuccess,
-	messagesFailure,
 	deleteSuccess,
 	deleteFailure,
 	editSuccess,
 	editFailure,
 	toggleStarSuccess,
 	toggleStarFailure,
-	permalinkSuccess,
-	permalinkFailure,
 	togglePinSuccess,
 	togglePinFailure,
-	setInput
+	replyInit
 } from '../actions/messages';
 import RocketChat from '../lib/rocketchat';
 import database from '../lib/realm';
-import { goRoom } from '../containers/routes/NavigationService';
 import log from '../utils/log';
 
 const deleteMessage = message => RocketChat.deleteMessage(message);
 const editMessage = message => RocketChat.editMessage(message);
 const toggleStarMessage = message => RocketChat.toggleStarMessage(message);
-const getPermalink = message => RocketChat.getPermalink(message);
 const togglePinMessage = message => RocketChat.togglePinMessage(message);
-
-const get = function* get({ room }) {
-	try {
-		if (room.lastOpen) {
-			yield RocketChat.loadMissedMessages(room);
-		} else {
-			yield RocketChat.loadMessagesForRoom(room);
-		}
-		yield put(messagesSuccess());
-	} catch (err) {
-		console.warn('messagesFailure', err);
-		yield put(messagesFailure(err.status));
-	}
-};
 
 const handleDeleteRequest = function* handleDeleteRequest({ message }) {
 	try {
@@ -68,15 +51,6 @@ const handleToggleStarRequest = function* handleToggleStarRequest({ message }) {
 	}
 };
 
-const handlePermalinkRequest = function* handlePermalinkRequest({ message }) {
-	try {
-		const permalink = yield call(getPermalink, message);
-		yield put(permalinkSuccess(permalink));
-	} catch (error) {
-		yield put(permalinkFailure(error));
-	}
-};
-
 const handleTogglePinRequest = function* handleTogglePinRequest({ message }) {
 	try {
 		yield call(togglePinMessage, message);
@@ -86,31 +60,32 @@ const handleTogglePinRequest = function* handleTogglePinRequest({ message }) {
 	}
 };
 
+const goRoom = function goRoom({ rid, name }) {
+	Navigation.navigate('RoomsListView');
+	Navigation.navigate('RoomView', { rid, name, t: 'd' });
+};
+
 const handleReplyBroadcast = function* handleReplyBroadcast({ message }) {
 	try {
 		const { username } = message.u;
 		const subscriptions = database.objects('subscriptions').filtered('name = $0', username);
 		if (subscriptions.length) {
-			goRoom({ rid: subscriptions[0].rid, name: subscriptions[0].name });
+			yield goRoom({ rid: subscriptions[0].rid, name: username });
 		} else {
 			const room = yield RocketChat.createDirectMessage(username);
-			goRoom({ rid: room.rid, name: username });
+			yield goRoom({ rid: room.rid, name: username });
 		}
-		yield delay(100);
-		const server = yield select(state => state.server.server);
-		const msg = `[ ](${ server }/direct/${ username }?msg=${ message._id }) `;
-		yield put(setInput({ msg }));
+		yield delay(500);
+		yield put(replyInit(message, false));
 	} catch (e) {
-		log('handleReplyBroadcast', e);
+		log('err_reply_broadcast', e);
 	}
 };
 
 const root = function* root() {
-	yield takeLatest(MESSAGES.REQUEST, get);
 	yield takeLatest(MESSAGES.DELETE_REQUEST, handleDeleteRequest);
 	yield takeLatest(MESSAGES.EDIT_REQUEST, handleEditRequest);
 	yield takeLatest(MESSAGES.TOGGLE_STAR_REQUEST, handleToggleStarRequest);
-	yield takeLatest(MESSAGES.PERMALINK_REQUEST, handlePermalinkRequest);
 	yield takeLatest(MESSAGES.TOGGLE_PIN_REQUEST, handleTogglePinRequest);
 	yield takeLatest(MESSAGES.REPLY_BROADCAST, handleReplyBroadcast);
 };

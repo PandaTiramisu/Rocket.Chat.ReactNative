@@ -1,60 +1,78 @@
 import { InteractionManager } from 'react-native';
 
-import { get } from './helpers/rest';
 import buildMessage from './helpers/buildMessage';
 import database from '../realm';
 import log from '../../utils/log';
 
-async function loadMissedMessagesRest({ rid: roomId, lastOpen: lastUpdate }) {
-	const { token, id } = this.ddp._login;
-	const server = this.ddp.url.replace('ws', 'http');
-	const { result } = await get({ token, id, server }, 'chat.syncMessages', { roomId, lastUpdate });
-	// TODO: api fix
-	return result.updated || result.messages;
-}
+const getLastUpdate = (rid) => {
+	const sub = database
+		.objects('subscriptions')
+		.filtered('rid == $0', rid)[0];
+	return sub && new Date(sub.lastOpen).toISOString();
+};
 
-async function loadMissedMessagesDDP(...args) {
-	const [{ rid, lastOpen: lastUpdate }] = args;
-
-	try {
-		const data = await this.ddp.call('messages/get', rid, { lastUpdate: new Date(lastUpdate) });
-		return data.updated || data.messages;
-	} catch (e) {
-		return loadMissedMessagesRest.call(this, ...args);
+async function load({ rid: roomId, lastOpen }) {
+	let lastUpdate;
+	if (lastOpen) {
+		lastUpdate = new Date(lastOpen).toISOString();
+	} else {
+		lastUpdate = getLastUpdate(roomId);
 	}
-
-	// }
-	// 	if (cb) {
-	// 		cb({ end: data && data.messages.length < 20 });
-	// 	}
-	// 	return data.message;
-	// }, (err) => {
-	// 	if (err) {
-	// 		if (cb) {
-	// 			cb({ end: true });
-	// 		}
-	// 		return Promise.reject(err);
-	// 	}
-	// });
+	// RC 0.60.0
+	const { result } = await this.sdk.get('chat.syncMessages', { roomId, lastUpdate });
+	return result;
 }
 
-export default async function(...args) {
-	const { database: db } = database;
+export default function loadMissedMessages(...args) {
 	return new Promise(async(resolve, reject) => {
 		try {
-			// eslint-disable-next-line
-			const data = (await (false && this.ddp.status ? loadMissedMessagesDDP.call(this, ...args) : loadMissedMessagesRest.call(this, ...args)));
+			const data = (await load.call(this, ...args));
 
 			if (data) {
-				data.forEach(buildMessage);
-				return InteractionManager.runAfterInteractions(() => {
-					db.write(() => data.forEach(message => db.create('messages', message, true)));
-					resolve(data);
-				});
+				if (data.updated && data.updated.length) {
+					const { updated } = data;
+					InteractionManager.runAfterInteractions(() => {
+						database.write(() => updated.forEach((message) => {
+							try {
+								message = buildMessage(message);
+								database.create('messages', message, true);
+								// if it's a thread "header"
+								if (message.tlm) {
+									database.create('threads', message, true);
+								}
+								if (message.tmid) {
+									message.rid = message.tmid;
+									database.create('threadMessages', message, true);
+								}
+							} catch (e) {
+								log('err_load_missed_messages_create', e);
+							}
+						}));
+					});
+				}
+				if (data.deleted && data.deleted.length) {
+					const { deleted } = data;
+					InteractionManager.runAfterInteractions(() => {
+						try {
+							database.write(() => {
+								deleted.forEach((m) => {
+									const message = database.objects('messages').filtered('_id = $0', m._id);
+									database.delete(message);
+									const thread = database.objects('threads').filtered('_id = $0', m._id);
+									database.delete(thread);
+									const threadMessage = database.objects('threadMessages').filtered('_id = $0', m._id);
+									database.delete(threadMessage);
+								});
+							});
+						} catch (e) {
+							log('err_load_missed_messages_delete', e);
+						}
+					});
+				}
 			}
-			resolve([]);
+			resolve();
 		} catch (e) {
-			log('loadMissedMessages', e);
+			log('err_load_missed_messages', e);
 			reject(e);
 		}
 	});

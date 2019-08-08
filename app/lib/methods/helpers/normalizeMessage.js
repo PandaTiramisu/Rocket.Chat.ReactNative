@@ -1,3 +1,5 @@
+import moment from 'moment';
+
 import parseUrls from './parseUrls';
 
 function normalizeAttachments(msg) {
@@ -6,6 +8,9 @@ function normalizeAttachments(msg) {
 	}
 	msg.attachments = msg.attachments.map((att) => {
 		att.fields = att.fields || [];
+		if (att.ts) {
+			att.ts = moment(att.ts).toDate();
+		}
 		att = normalizeAttachments(att);
 		return att;
 	});
@@ -13,14 +18,27 @@ function normalizeAttachments(msg) {
 }
 
 export default (msg) => {
-	if (!msg) { return; }
+	/**
+	 * 2019-03-29: Realm object properties are *always* optional, but `u.username` is required
+	 * https://realm.io/docs/javascript/latest/#to-one-relationships
+	 */
+	if (!msg || !msg.u || !msg.u.username) { return; }
+
 	msg = normalizeAttachments(msg);
 	msg.reactions = msg.reactions || [];
+	msg.unread = msg.unread || false;
 	// TODO: api problems
-	if (Array.isArray(msg.reactions)) {
-		msg.reactions = msg.reactions.map((value, key) => ({ teste: 1, emoji: key, usernames: value.usernames.map(username => ({ value: username })) }));
-	} else {
-		msg.reactions = Object.keys(msg.reactions).map(key => ({ teste: 1, emoji: key, usernames: msg.reactions[key].usernames.map(username => ({ value: username })) }));
+	// if (Array.isArray(msg.reactions)) {
+	// 	msg.reactions = msg.reactions.map((value, key) => ({ emoji: key, usernames: value.usernames.map(username => ({ value: username })) }));
+	// } else {
+	// 	msg.reactions = Object.keys(msg.reactions).map(key => ({ emoji: key, usernames: msg.reactions[key].usernames.map(username => ({ value: username })) }));
+	// }
+	if (!Array.isArray(msg.reactions)) {
+		msg.reactions = Object.keys(msg.reactions).map(key => ({ _id: `${ msg._id }${ key }`, emoji: key, usernames: msg.reactions[key].usernames }));
+	}
+	if (msg.translations && Object.keys(msg.translations).length) {
+		msg.translations = Object.keys(msg.translations).map(key => ({ _id: `${ msg._id }${ key }`, language: key, value: msg.translations[key] }));
+		msg.autoTranslate = true;
 	}
 	msg.urls = msg.urls ? parseUrls(msg.urls) : [];
 	msg._updatedAt = new Date();

@@ -1,118 +1,144 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { FlatList, Text, View, TextInput, Vibration, TouchableOpacity } from 'react-native';
+import { FlatList, View, ActivityIndicator } from 'react-native';
+import ActionSheet from 'react-native-action-sheet';
 import { connect } from 'react-redux';
-import ActionSheet from 'react-native-actionsheet';
+import { SafeAreaView } from 'react-navigation';
+import equal from 'deep-equal';
+import * as Haptics from 'expo-haptics';
 
-import LoggedView from '../View';
 import styles from './styles';
-import sharedStyles from '../Styles';
-import RoomItem from '../../presentation/RoomItem';
+import UserItem from '../../presentation/UserItem';
 import scrollPersistTaps from '../../utils/scrollPersistTaps';
 import RocketChat from '../../lib/rocketchat';
-import { goRoom } from '../../containers/routes/NavigationService';
-import database from '../../lib/realm';
-import { showToast } from '../../utils/info';
+import database, { safeAddListener } from '../../lib/realm';
+import { LISTENER } from '../../containers/Toast';
+import EventEmitter from '../../utils/events';
 import log from '../../utils/log';
 import I18n from '../../i18n';
+import SearchBox from '../../containers/SearchBox';
+import protectedFunction from '../../lib/methods/helpers/protectedFunction';
+import { CustomHeaderButtons, Item } from '../../containers/HeaderButton';
+import StatusBar from '../../containers/StatusBar';
 
-@connect(state => ({
-	user: state.login.user,
-	baseUrl: state.settings.Site_Url || state.server ? state.server.server : ''
-}))
-export default class MentionedMessagesView extends LoggedView {
-	static propTypes = {
-		navigation: PropTypes.object
-	}
+const PAGE_SIZE = 25;
 
+class RoomMembersView extends React.Component {
 	static navigationOptions = ({ navigation }) => {
-		const params = navigation.state.params || {};
-		const label = params.allUsers ? I18n.t('All') : I18n.t('Online');
-		if (params.allUsers === undefined) {
-			return;
-		}
+		const toggleStatus = navigation.getParam('toggleStatus', () => {});
+		const allUsers = navigation.getParam('allUsers');
+		const toggleText = allUsers ? I18n.t('Online') : I18n.t('All');
 		return {
+			title: I18n.t('Members'),
 			headerRight: (
-				<TouchableOpacity
-					onPress={params.onPressToogleStatus}
-					accessibilityLabel={label}
-					accessibilityTraits='button'
-					style={[sharedStyles.headerButton, styles.headerButton]}
-					testID='room-members-view-toggle-status'
-				>
-					<Text>{label}</Text>
-				</TouchableOpacity>
+				<CustomHeaderButtons>
+					<Item title={toggleText} onPress={toggleStatus} testID='room-members-view-toggle-status' />
+				</CustomHeaderButtons>
 			)
 		};
-	};
+	}
+
+	static propTypes = {
+		navigation: PropTypes.object,
+		rid: PropTypes.string,
+		members: PropTypes.array,
+		baseUrl: PropTypes.string,
+		room: PropTypes.object,
+		user: PropTypes.shape({
+			id: PropTypes.string,
+			token: PropTypes.string
+		})
+	}
 
 	constructor(props) {
-		super('MentionedMessagesView', props);
+		super(props);
+
 		this.CANCEL_INDEX = 0;
 		this.MUTE_INDEX = 1;
 		this.actionSheetOptions = [''];
-		const { rid, members } = props.navigation.state.params;
+		const { rid } = props.navigation.state.params;
 		this.rooms = database.objects('subscriptions').filtered('rid = $0', rid);
 		this.permissions = RocketChat.hasPermission(['mute-user'], rid);
 		this.state = {
+			isLoading: false,
 			allUsers: false,
 			filtering: false,
 			rid,
-			members,
+			members: [],
 			membersFiltered: [],
 			userLongPressed: {},
-			room: {}
+			room: this.rooms[0] || {},
+			options: [],
+			end: false
 		};
 	}
 
 	componentDidMount() {
-		this.props.navigation.setParams({
-			onPressToogleStatus: this.onPressToogleStatus,
-			allUsers: this.state.allUsers
-		});
-		this.rooms.addListener(this.updateRoom);
+		this.fetchMembers();
+		safeAddListener(this.rooms, this.updateRoom);
+
+		const { navigation } = this.props;
+		navigation.setParams({ toggleStatus: this.toggleStatus });
+	}
+
+	shouldComponentUpdate(nextProps, nextState) {
+		const {
+			allUsers, filtering, members, membersFiltered, userLongPressed, room, options, isLoading
+		} = this.state;
+		if (nextState.allUsers !== allUsers) {
+			return true;
+		}
+		if (nextState.filtering !== filtering) {
+			return true;
+		}
+		if (!equal(nextState.members, members)) {
+			return true;
+		}
+		if (!equal(nextState.options, options)) {
+			return true;
+		}
+		if (!equal(nextState.membersFiltered, membersFiltered)) {
+			return true;
+		}
+		if (!equal(nextState.userLongPressed, userLongPressed)) {
+			return true;
+		}
+		if (!equal(nextState.room.muted, room.muted)) {
+			return true;
+		}
+		if (isLoading !== nextState.isLoading) {
+			return true;
+		}
+		return false;
 	}
 
 	componentWillUnmount() {
 		this.rooms.removeAllListeners();
 	}
 
-	updateRoom = async() => {
-		const [room] = this.rooms;
-		await this.setState({ room });
-	}
-
-	onSearchChangeText = (text) => {
+	onSearchChangeText = protectedFunction((text) => {
+		const { members } = this.state;
 		let membersFiltered = [];
-		if (text) {
-			membersFiltered = this.state.members.filter(m => m.username.toLowerCase().match(text.toLowerCase()));
+
+		if (members && members.length > 0 && text) {
+			membersFiltered = members.filter(m => m.username.toLowerCase().match(text.toLowerCase()));
 		}
 		this.setState({ filtering: !!text, membersFiltered });
-	}
-
-	onPressToogleStatus = async() => {
-		try {
-			const allUsers = !this.state.allUsers;
-			this.props.navigation.setParams({ allUsers });
-			const membersResult = await RocketChat.getRoomMembers(this.state.rid, allUsers);
-			const members = membersResult.records;
-			this.setState({ allUsers, members });
-		} catch (e) {
-			log('onPressToogleStatus', e);
-		}
-	}
+	})
 
 	onPressUser = async(item) => {
 		try {
 			const subscriptions = database.objects('subscriptions').filtered('name = $0', item.username);
 			if (subscriptions.length) {
-				goRoom({ rid: subscriptions[0].rid, name: subscriptions[0].name });
+				this.goRoom({ rid: subscriptions[0].rid, name: item.username });
 			} else {
-				const room = await RocketChat.createDirectMessage(item.username);
-				goRoom({ rid: room.rid, name: item.username });
+				const result = await RocketChat.createDirectMessage(item.username);
+				if (result.success) {
+					this.goRoom({ rid: result.room._id, name: item.username });
+				}
 			}
 		} catch (e) {
-			log('onPressUser', e);
+			log('err_on_press_user', e);
 		}
 	}
 
@@ -120,9 +146,11 @@ export default class MentionedMessagesView extends LoggedView {
 		if (!this.permissions['mute-user']) {
 			return;
 		}
+		const { room } = this.state;
+		const { muted } = room;
+
 		this.actionSheetOptions = [I18n.t('Cancel')];
-		const { muted } = this.state.room;
-		const userIsMuted = !!muted.find(m => m.value === user.username);
+		const userIsMuted = !!muted.find(m => m === user.username);
 		user.muted = userIsMuted;
 		if (userIsMuted) {
 			this.actionSheetOptions.push(I18n.t('Unmute'));
@@ -130,17 +158,77 @@ export default class MentionedMessagesView extends LoggedView {
 			this.actionSheetOptions.push(I18n.t('Mute'));
 		}
 		this.setState({ userLongPressed: user });
-		Vibration.vibrate(50);
-		this.ActionSheet.show();
+		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+		this.showActionSheet();
+	}
+
+	toggleStatus = () => {
+		try {
+			const { allUsers } = this.state;
+			this.setState({ members: [], allUsers: !allUsers, end: false }, () => {
+				this.fetchMembers();
+			});
+		} catch (e) {
+			log('err_toggle_status', e);
+		}
+	}
+
+	showActionSheet = () => {
+		ActionSheet.showActionSheetWithOptions({
+			options: this.actionSheetOptions,
+			cancelButtonIndex: this.CANCEL_INDEX,
+			title: I18n.t('Actions')
+		}, (actionIndex) => {
+			this.handleActionPress(actionIndex);
+		});
+	}
+
+	// eslint-disable-next-line react/sort-comp
+	fetchMembers = async() => {
+		const {
+			rid, members, isLoading, allUsers, end
+		} = this.state;
+		const { navigation } = this.props;
+		if (isLoading || end) {
+			return;
+		}
+
+		this.setState({ isLoading: true });
+		try {
+			const membersResult = await RocketChat.getRoomMembers(rid, allUsers, members.length, PAGE_SIZE);
+			const newMembers = membersResult.records;
+			this.setState({
+				members: members.concat(newMembers || []),
+				isLoading: false,
+				end: newMembers.length < PAGE_SIZE
+			});
+			navigation.setParams({ allUsers });
+		} catch (error) {
+			log('err_fetch_members, error');
+			this.setState({ isLoading: false });
+		}
+	}
+
+	updateRoom = () => {
+		if (this.rooms.length > 0) {
+			const [room] = this.rooms;
+			this.setState({ room });
+		}
+	}
+
+	goRoom = async({ rid, name }) => {
+		const { navigation } = this.props;
+		await navigation.popToTop();
+		navigation.navigate('RoomView', { rid, name, t: 'd' });
 	}
 
 	handleMute = async() => {
 		const { rid, userLongPressed } = this.state;
 		try {
 			await RocketChat.toggleMuteUserInRoom(rid, userLongPressed.username, !userLongPressed.muted);
-			showToast(I18n.t('User_has_been_key', { key: userLongPressed.muted ? I18n.t('unmuted') : I18n.t('muted') }));
+			EventEmitter.emit(LISTENER, { message: I18n.t('User_has_been_key', { key: userLongPressed.muted ? I18n.t('unmuted') : I18n.t('muted') }) });
 		} catch (e) {
-			log('handleMute', e);
+			log('err_handle_mute', e);
 		}
 	}
 
@@ -155,63 +243,67 @@ export default class MentionedMessagesView extends LoggedView {
 	}
 
 	renderSearchBar = () => (
-		<View style={styles.searchBoxView}>
-			<TextInput
-				underlineColorAndroid='transparent'
-				style={styles.searchBox}
-				onChangeText={text => this.onSearchChangeText(text)}
-				returnKeyType='search'
-				placeholder={I18n.t('Search')}
-				clearButtonMode='while-editing'
-				blurOnSubmit
-				autoCorrect={false}
-				autoCapitalize='none'
-				testID='room-members-view-search'
-			/>
-		</View>
+		<SearchBox onChangeText={text => this.onSearchChangeText(text)} testID='room-members-view-search' />
 	)
 
 	renderSeparator = () => <View style={styles.separator} />;
 
-	renderItem = ({ item }) => (
-		<RoomItem
-			name={item.username}
-			type='d'
-			baseUrl={this.props.baseUrl}
-			onPress={() => this.onPressUser(item)}
-			onLongPress={() => this.onLongPressUser(item)}
-			id={item._id}
-			showLastMessage={false}
-			avatarSize={30}
-			statusStyle={styles.status}
-			testID={`room-members-view-item-${ item.username }`}
-		/>
-	)
+	renderItem = ({ item }) => {
+		const { baseUrl, user } = this.props;
+
+		return (
+			<UserItem
+				name={item.name}
+				username={item.username}
+				onPress={() => this.onPressUser(item)}
+				onLongPress={() => this.onLongPressUser(item)}
+				baseUrl={baseUrl}
+				testID={`room-members-view-item-${ item.username }`}
+				user={user}
+			/>
+		);
+	}
 
 	render() {
-		const { filtering, members, membersFiltered } = this.state;
+		const {
+			filtering, members, membersFiltered, isLoading
+		} = this.state;
+		// if (isLoading) {
+		// 	return <ActivityIndicator style={styles.loading} />;
+		// }
 		return (
-			[
+			<SafeAreaView style={styles.list} testID='room-members-view' forceInset={{ vertical: 'never' }}>
+				<StatusBar />
 				<FlatList
-					key='room-members-view-list'
-					testID='room-members-view'
 					data={filtering ? membersFiltered : members}
 					renderItem={this.renderItem}
 					style={styles.list}
 					keyExtractor={item => item._id}
 					ItemSeparatorComponent={this.renderSeparator}
 					ListHeaderComponent={this.renderSearchBar}
+					ListFooterComponent={() => {
+						if (isLoading) {
+							return <ActivityIndicator style={styles.loading} />;
+						}
+						return null;
+					}}
+					onEndReachedThreshold={0.1}
+					onEndReached={this.fetchMembers}
+					maxToRenderPerBatch={5}
+					windowSize={10}
 					{...scrollPersistTaps}
-				/>,
-				<ActionSheet
-					key='room-members-actionsheet'
-					ref={o => this.ActionSheet = o}
-					title={I18n.t('Actions')}
-					options={this.actionSheetOptions}
-					cancelButtonIndex={this.CANCEL_INDEX}
-					onPress={this.handleActionPress}
 				/>
-			]
+			</SafeAreaView>
 		);
 	}
 }
+
+const mapStateToProps = state => ({
+	baseUrl: state.settings.Site_Url || state.server ? state.server.server : '',
+	user: {
+		id: state.login.user && state.login.user.id,
+		token: state.login.user && state.login.user.token
+	}
+});
+
+export default connect(mapStateToProps)(RoomMembersView);

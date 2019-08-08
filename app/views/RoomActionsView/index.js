@@ -1,60 +1,113 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { View, SectionList, Text, Alert } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
-import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
+import {
+	View, SectionList, Text, Alert, Share
+} from 'react-native';
 import { connect } from 'react-redux';
+import { SafeAreaView } from 'react-navigation';
+import equal from 'deep-equal';
 
-import LoggedView from '../View';
+import { leaveRoom as leaveRoomAction } from '../../actions/room';
 import styles from './styles';
 import sharedStyles from '../Styles';
 import Avatar from '../../containers/Avatar';
-import Status from '../../containers/status';
+import Status from '../../containers/Status';
 import Touch from '../../utils/touch';
-import database from '../../lib/realm';
+import database, { safeAddListener } from '../../lib/realm';
 import RocketChat from '../../lib/rocketchat';
-import { leaveRoom } from '../../actions/room';
-import { setLoading } from '../../actions/selectedUsers';
 import log from '../../utils/log';
 import RoomTypeIcon from '../../containers/RoomTypeIcon';
 import I18n from '../../i18n';
+import scrollPersistTaps from '../../utils/scrollPersistTaps';
+import { CustomIcon } from '../../lib/Icons';
+import DisclosureIndicator from '../../containers/DisclosureIndicator';
+import StatusBar from '../../containers/StatusBar';
+import { COLOR_WHITE } from '../../constants/colors';
 
 const renderSeparator = () => <View style={styles.separator} />;
-const getRoomTitle = room => (room.t === 'd' ? <Text>{room.fname}</Text> : <Text><RoomTypeIcon type={room.t} />&nbsp;{room.name}</Text>);
 
-@connect(state => ({
-	user_id: state.login.user.id,
-	user_username: state.login.user.username
-}), dispatch => ({
-	leaveRoom: rid => dispatch(leaveRoom(rid)),
-	setLoadingInvite: loading => dispatch(setLoading(loading))
-}))
+class RoomActionsView extends React.Component {
+	static navigationOptions = {
+		title: I18n.t('Actions')
+	}
 
-export default class RoomActionsView extends LoggedView {
 	static propTypes = {
 		baseUrl: PropTypes.string,
-		user: PropTypes.object,
 		navigation: PropTypes.object,
+		user: PropTypes.shape({
+			id: PropTypes.string,
+			token: PropTypes.string
+		}),
 		leaveRoom: PropTypes.func
 	}
 
 	constructor(props) {
-		super('RoomActionsView', props);
-		const { rid } = props.navigation.state.params;
-		this.rooms = database.objects('subscriptions').filtered('rid = $0', rid);
-		[this.room] = this.rooms;
+		super(props);
+		this.rid = props.navigation.getParam('rid');
+		this.t = props.navigation.getParam('t');
+		this.rooms = database.objects('subscriptions').filtered('rid = $0', this.rid);
 		this.state = {
-			room: this.room,
-			onlineMembers: [],
-			allMembers: [],
-			member: {}
+			room: this.rooms[0] || { rid: this.rid, t: this.t },
+			membersCount: 0,
+			member: {},
+			joined: this.rooms.length > 0,
+			canViewMembers: false,
+			canAutoTranslate: false
 		};
 	}
 
 	async componentDidMount() {
-		this.rooms.addListener(this.updateRoom);
-		const [members, member] = await Promise.all([this.updateRoomMembers(), this.updateRoomMember()]);
-		this.setState({ ...members, ...member });
+		const { room } = this.state;
+		if (!room._id) {
+			try {
+				const result = await RocketChat.getChannelInfo(room.rid);
+				if (result.success) {
+					this.setState({ room: { ...result.channel, rid: result.channel._id } });
+				}
+			} catch (error) {
+				log('err_get_channel_info', error);
+			}
+		}
+
+		if (room && room.t !== 'd' && this.canViewMembers) {
+			try {
+				const counters = await RocketChat.getRoomCounters(room.rid, room.t);
+				if (counters.success) {
+					this.setState({ membersCount: counters.members, joined: counters.joined });
+				}
+			} catch (error) {
+				log('err_get_room_counters', error);
+			}
+		} else if (room.t === 'd') {
+			this.updateRoomMember();
+		}
+
+		const canAutoTranslate = RocketChat.canAutoTranslate();
+		this.setState({ canAutoTranslate });
+
+		safeAddListener(this.rooms, this.updateRoom);
+	}
+
+	shouldComponentUpdate(nextProps, nextState) {
+		const {
+			room, membersCount, member, joined, canViewMembers
+		} = this.state;
+		if (nextState.membersCount !== membersCount) {
+			return true;
+		}
+		if (nextState.joined !== joined) {
+			return true;
+		}
+		if (nextState.canViewMembers !== canViewMembers) {
+			return true;
+		}
+		if (!equal(nextState.room, room)) {
+			return true;
+		}
+		if (!equal(nextState.member, member)) {
+			return true;
+		}
+		return false;
 	}
 
 	componentWillUnmount() {
@@ -63,59 +116,20 @@ export default class RoomActionsView extends LoggedView {
 
 	onPressTouchable = (item) => {
 		if (item.route) {
-			return this.props.navigation.navigate({ key: item.route, routeName: item.route, params: item.params });
+			const { navigation } = this.props;
+			navigation.navigate(item.route, item.params);
 		}
 		if (item.event) {
 			return item.event();
 		}
 	}
 
-	updateRoomMembers = async() => {
-		const { t } = this.state.room;
+	// TODO: move to componentDidMount
+	get canAddUser() {
+		const { room, joined } = this.state;
+		const { rid, t } = room;
 
-		if (!this.canViewMembers) {
-			return {};
-		}
-
-		if (t === 'c' || t === 'p') {
-			let onlineMembers = [];
-			let allMembers = [];
-			try {
-				const onlineMembersCall = RocketChat.getRoomMembers(this.state.room.rid, false);
-				const allMembersCall = RocketChat.getRoomMembers(this.state.room.rid, true);
-				const [onlineMembersResult, allMembersResult] = await Promise.all([onlineMembersCall, allMembersCall]);
-				onlineMembers = onlineMembersResult.records;
-				allMembers = allMembersResult.records;
-				return { onlineMembers, allMembers };
-			} catch (error) {
-				return {};
-			}
-		}
-	}
-
-	updateRoomMember = async() => {
-		if (this.state.room.t !== 'd') {
-			return {};
-		}
-		try {
-			const member = await RocketChat.getRoomMember(this.state.room.rid, this.props.user_id);
-			return { member };
-		} catch (e) {
-			log('RoomActions updateRoomMember', e);
-			return {};
-		}
-	}
-
-	updateRoom = () => {
-		this.setState({ room: this.room });
-	}
-	get canAddUser() { // Invite user
-		const {
-			rid, t
-		} = this.room;
-		const { allMembers } = this.state;
-		// TODO: same test joined
-		const userInRoom = !!allMembers.find(m => m.username === this.props.user_username);
+		const userInRoom = joined;
 		const permissions = RocketChat.hasPermission(['add-user-to-joined-room', 'add-user-to-any-c-room', 'add-user-to-any-p-room'], rid);
 
 		if (userInRoom && permissions['add-user-to-joined-room']) {
@@ -129,8 +143,11 @@ export default class RoomActionsView extends LoggedView {
 		}
 		return false;
 	}
+
+	// TODO: move to componentDidMount
 	get canViewMembers() {
-		const { rid, t, broadcast } = this.state.room;
+		const { room } = this.state;
+		const { rid, t, broadcast } = room;
 		if (broadcast) {
 			const viewBroadcastMemberListPermission = 'view-broadcast-member-list';
 			const permissions = RocketChat.hasPermission([viewBroadcastMemberListPermission], rid);
@@ -138,33 +155,49 @@ export default class RoomActionsView extends LoggedView {
 				return false;
 			}
 		}
-		return (t === 'c' || t === 'p');
+
+		// This method is executed only in componentDidMount and returns a value
+		// We save the state to read in render
+		const result = (t === 'c' || t === 'p');
+		this.setState({ canViewMembers: result });
+		return result;
 	}
+
 	get sections() {
 		const {
+			room, membersCount, canViewMembers, joined, canAutoTranslate
+		} = this.state;
+		const {
 			rid, t, blocker, notifications
-		} = this.room;
-		const { onlineMembers } = this.state;
+		} = room;
+
+		const notificationsAction = {
+			icon: notifications ? 'bell' : 'Bell-off',
+			name: I18n.t(`${ notifications ? 'Enable' : 'Disable' }_notifications`),
+			event: this.toggleNotifications,
+			testID: 'room-actions-notifications'
+		};
 
 		const sections = [{
 			data: [{
-				icon: 'ios-star',
-				name: 'USER',
-				route: 'RoomInfo',
-				params: { rid },
+				icon: 'star',
+				name: I18n.t('Room_Info'),
+				route: 'RoomInfoView',
+				// forward room only if room isn't joined
+				params: { rid, t, room: joined ? null : room },
 				testID: 'room-actions-info'
 			}],
 			renderItem: this.renderRoomInfo
 		}, {
 			data: [
 				{
-					icon: 'ios-call-outline',
+					icon: 'livechat',
 					name: I18n.t('Voice_call'),
 					disabled: true,
 					testID: 'room-actions-voice'
 				},
 				{
-					icon: 'ios-videocam-outline',
+					icon: 'video',
 					name: I18n.t('Video_call'),
 					disabled: true,
 					testID: 'room-actions-video'
@@ -174,142 +207,168 @@ export default class RoomActionsView extends LoggedView {
 		}, {
 			data: [
 				{
-					icon: 'ios-attach',
+					icon: 'file-generic',
 					name: I18n.t('Files'),
-					route: 'RoomFiles',
-					params: { rid },
+					route: 'MessagesView',
+					params: { rid, t, name: 'Files' },
 					testID: 'room-actions-files'
 				},
 				{
-					icon: 'ios-at-outline',
+					icon: 'at',
 					name: I18n.t('Mentions'),
-					route: 'MentionedMessages',
-					params: { rid },
+					route: 'MessagesView',
+					params: { rid, t, name: 'Mentions' },
 					testID: 'room-actions-mentioned'
 				},
 				{
-					icon: 'ios-star-outline',
+					icon: 'star',
 					name: I18n.t('Starred'),
-					route: 'StarredMessages',
-					params: { rid },
+					route: 'MessagesView',
+					params: { rid, t, name: 'Starred' },
 					testID: 'room-actions-starred'
 				},
 				{
-					icon: 'ios-search',
+					icon: 'magnifier',
 					name: I18n.t('Search'),
-					route: 'SearchMessages',
+					route: 'SearchMessagesView',
 					params: { rid },
 					testID: 'room-actions-search'
 				},
 				{
-					icon: 'ios-share-outline',
+					icon: 'share',
 					name: I18n.t('Share'),
-					disabled: true,
+					event: this.handleShare,
 					testID: 'room-actions-share'
 				},
 				{
-					icon: 'ios-pin',
+					icon: 'pin',
 					name: I18n.t('Pinned'),
-					route: 'PinnedMessages',
-					params: { rid },
+					route: 'MessagesView',
+					params: { rid, t, name: 'Pinned' },
 					testID: 'room-actions-pinned'
-				},
-				{
-					icon: 'ios-code',
-					name: I18n.t('Snippets'),
-					route: 'SnippetedMessages',
-					params: { rid },
-					testID: 'room-actions-snippeted'
-				},
-				{
-					icon: `ios-notifications${ notifications ? '' : '-off' }-outline`,
-					name: I18n.t(`${ notifications ? 'Enable' : 'Disable' }_notifications`),
-					event: () => this.toggleNotifications(),
-					testID: 'room-actions-notifications'
 				}
 			],
 			renderItem: this.renderItem
 		}];
 
+		if (canAutoTranslate) {
+			sections[2].data.push({
+				icon: 'language',
+				name: I18n.t('Auto_Translate'),
+				route: 'AutoTranslateView',
+				params: { rid },
+				testID: 'room-actions-auto-translate'
+			});
+		}
+
 		if (t === 'd') {
 			sections.push({
 				data: [
 					{
-						icon: 'block',
+						icon: 'ban',
 						name: I18n.t(`${ blocker ? 'Unblock' : 'Block' }_user`),
 						type: 'danger',
-						event: () => this.toggleBlockUser(),
+						event: this.toggleBlockUser,
 						testID: 'room-actions-block-user'
 					}
 				],
 				renderItem: this.renderItem
 			});
+			sections[2].data.push(notificationsAction);
 		} else if (t === 'c' || t === 'p') {
 			const actions = [];
 
-			if (this.canViewMembers) {
+			if (canViewMembers) {
 				actions.push({
-					icon: 'ios-people',
+					icon: 'team',
 					name: I18n.t('Members'),
-					description: (onlineMembers.length === 1 ?
-						I18n.t('1_online_member') :
-						I18n.t('N_online_members', { n: onlineMembers.length })),
-					route: 'RoomMembers',
-					params: { rid, members: onlineMembers },
+					description: membersCount > 0 ? `${ membersCount } ${ I18n.t('members') }` : null,
+					route: 'RoomMembersView',
+					params: { rid },
 					testID: 'room-actions-members'
 				});
 			}
 
 			if (this.canAddUser) {
 				actions.push({
-					icon: 'ios-person-add',
+					icon: 'user-plus',
 					name: I18n.t('Add_user'),
-					route: 'SelectedUsers',
+					route: 'SelectedUsersView',
 					params: {
-						nextAction: async() => {
-							try {
-								this.props.setLoadingInvite(true);
-								await RocketChat.addUsersToRoom(rid);
-								this.props.navigation.goBack();
-							} catch (e) {
-								log('RoomActions Add User', e);
-							} finally {
-								this.props.setLoadingInvite(false);
-							}
-						}
+						nextActionID: 'ADD_USER',
+						rid,
+						title: I18n.t('Add_user')
 					},
 					testID: 'room-actions-add-user'
 				});
 			}
 			sections[2].data = [...actions, ...sections[2].data];
-			sections.push({
-				data: [
-					{
-						icon: 'block',
-						name: I18n.t('Leave_channel'),
-						type: 'danger',
-						event: () => this.leaveChannel(),
-						testID: 'room-actions-leave-channel'
-					}
-				],
-				renderItem: this.renderItem
-			});
+
+			if (joined) {
+				sections[2].data.push(notificationsAction);
+				sections.push({
+					data: [
+						{
+							icon: 'sign-out',
+							name: I18n.t('Leave_channel'),
+							type: 'danger',
+							event: this.leaveChannel,
+							testID: 'room-actions-leave-channel'
+						}
+					],
+					renderItem: this.renderItem
+				});
+			}
 		}
 		return sections;
 	}
 
-	toggleBlockUser = async() => {
-		const { rid, blocker } = this.state.room;
+	updateRoom = () => {
+		if (this.rooms.length > 0) {
+			this.setState({ room: JSON.parse(JSON.stringify(this.rooms[0])) });
+		}
+	}
+
+	updateRoomMember = async() => {
+		const { room } = this.state;
+		const { rid } = room;
+		const { user } = this.props;
+
+		try {
+			const roomUserId = RocketChat.getRoomMemberId(rid, user.id);
+			const result = await RocketChat.getUserInfo(roomUserId);
+			if (result.success) {
+				this.setState({ member: result.user });
+			}
+		} catch (e) {
+			log('err_update_room_member', e);
+			this.setState({ member: {} });
+		}
+	}
+
+	toggleBlockUser = () => {
+		const { room } = this.state;
+		const { rid, blocker } = room;
 		const { member } = this.state;
 		try {
 			RocketChat.toggleBlockUser(rid, member._id, !blocker);
 		} catch (e) {
-			log('toggleBlockUser', e);
+			log('err_toggle_block_user', e);
 		}
 	}
 
+	handleShare = () => {
+		const { room } = this.state;
+		const permalink = RocketChat.getPermalinkChannel(room);
+		Share.share({
+			message: permalink
+		});
+	};
+
 	leaveChannel = () => {
 		const { room } = this.state;
+		const { leaveRoom } = this.props;
+
 		Alert.alert(
 			I18n.t('Are_you_sure_question_mark'),
 			I18n.t('Are_you_sure_you_want_to_leave_the_room', { room: room.t === 'd' ? room.fname : room.name }),
@@ -321,7 +380,7 @@ export default class RoomActionsView extends LoggedView {
 				{
 					text: I18n.t('Yes_action_it', { action: I18n.t('leave') }),
 					style: 'destructive',
-					onPress: () => this.props.leaveRoom(room.rid)
+					onPress: () => leaveRoom(room.rid, room.t)
 				}
 			]
 		);
@@ -330,15 +389,20 @@ export default class RoomActionsView extends LoggedView {
 	toggleNotifications = () => {
 		const { room } = this.state;
 		try {
-			RocketChat.saveNotificationSettings(room.rid, 'mobilePushNotifications', room.notifications ? 'default' : 'nothing');
+			const notifications = {
+				mobilePushNotifications: room.notifications ? 'default' : 'nothing'
+			};
+			RocketChat.saveNotificationSettings(room.rid, notifications);
 		} catch (e) {
-			log('toggleNotifications', e);
+			log('err_toggle_notifications', e);
 		}
 	}
 
 	renderRoomInfo = ({ item }) => {
 		const { room, member } = this.state;
 		const { name, t, topic } = room;
+		const { baseUrl, user } = this.props;
+
 		return (
 			this.renderTouchableItem([
 				<Avatar
@@ -347,14 +411,25 @@ export default class RoomActionsView extends LoggedView {
 					size={50}
 					style={styles.avatar}
 					type={t}
+					baseUrl={baseUrl}
+					userId={user.id}
+					token={user.token}
 				>
-					{t === 'd' ? <Status style={sharedStyles.status} id={member._id} /> : null }
+					{t === 'd' && member._id ? <Status style={sharedStyles.status} id={member._id} /> : null }
 				</Avatar>,
 				<View key='name' style={styles.roomTitleContainer}>
-					<Text style={styles.roomTitle}>{ getRoomTitle(room) }</Text>
+					{room.t === 'd'
+						? <Text style={styles.roomTitle}>{room.fname}</Text>
+						: (
+							<View style={styles.roomTitleRow}>
+								<RoomTypeIcon type={room.prid ? 'discussion' : room.t} />
+								<Text style={styles.roomTitle}>{room.prid ? room.fname : room.name}</Text>
+							</View>
+						)
+					}
 					<Text style={styles.roomDescription} ellipsizeMode='tail' numberOfLines={1}>{t === 'd' ? `@${ name }` : topic}</Text>
 				</View>,
-				<Icon key='icon' name='ios-arrow-forward' size={20} style={styles.sectionItemIcon} color='#ccc' />
+				<DisclosureIndicator key='disclosure-indicator' />
 			], item)
 		);
 	}
@@ -362,7 +437,7 @@ export default class RoomActionsView extends LoggedView {
 	renderTouchableItem = (subview, item) => (
 		<Touch
 			onPress={() => this.onPressTouchable(item)}
-			underlayColor='#FFFFFF'
+			underlayColor={COLOR_WHITE}
 			activeOpacity={0.5}
 			accessibilityLabel={item.name}
 			accessibilityTraits='button'
@@ -376,13 +451,13 @@ export default class RoomActionsView extends LoggedView {
 
 	renderItem = ({ item }) => {
 		const subview = item.type === 'danger' ? [
-			<MaterialIcon key='icon' name={item.icon} size={20} style={[styles.sectionItemIcon, styles.textColorDanger]} />,
+			<CustomIcon key='icon' name={item.icon} size={24} style={[styles.sectionItemIcon, styles.textColorDanger]} />,
 			<Text key='name' style={[styles.sectionItemName, styles.textColorDanger]}>{ item.name }</Text>
 		] : [
-			<Icon key='left-icon' name={item.icon} size={24} style={styles.sectionItemIcon} />,
+			<CustomIcon key='left-icon' name={item.icon} size={24} style={styles.sectionItemIcon} />,
 			<Text key='name' style={styles.sectionItemName}>{ item.name }</Text>,
 			item.description ? <Text key='description' style={styles.sectionItemDescription}>{ item.description }</Text> : null,
-			<Icon key='right-icon' name='ios-arrow-forward' size={20} style={styles.sectionItemIcon} color='#ccc' />
+			<DisclosureIndicator key='disclosure-indicator' />
 		];
 		return this.renderTouchableItem(subview, item);
 	}
@@ -399,8 +474,10 @@ export default class RoomActionsView extends LoggedView {
 
 	render() {
 		return (
-			<View testID='room-actions-view'>
+			<SafeAreaView style={styles.container} testID='room-actions-view' forceInset={{ vertical: 'never' }}>
+				<StatusBar />
 				<SectionList
+					contentContainerStyle={styles.contentContainer}
 					style={styles.container}
 					stickySectionHeadersEnabled={false}
 					sections={this.sections}
@@ -408,8 +485,23 @@ export default class RoomActionsView extends LoggedView {
 					ItemSeparatorComponent={renderSeparator}
 					keyExtractor={item => item.name}
 					testID='room-actions-list'
+					{...scrollPersistTaps}
 				/>
-			</View>
+			</SafeAreaView>
 		);
 	}
 }
+
+const mapStateToProps = state => ({
+	user: {
+		id: state.login.user && state.login.user.id,
+		token: state.login.user && state.login.user.token
+	},
+	baseUrl: state.settings.Site_Url || state.server ? state.server.server : ''
+});
+
+const mapDispatchToProps = dispatch => ({
+	leaveRoom: (rid, t) => dispatch(leaveRoomAction(rid, t))
+});
+
+export default connect(mapStateToProps, mapDispatchToProps)(RoomActionsView);

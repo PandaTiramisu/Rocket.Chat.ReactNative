@@ -1,62 +1,85 @@
-import { AsyncStorage } from 'react-native';
-import { delay } from 'redux-saga';
-import { takeLatest, take, select, call, put } from 'redux-saga/effects';
+import {
+	takeLatest, take, select, put, all, delay
+} from 'redux-saga/effects';
+import RNUserDefaults from 'rn-user-defaults';
+
+import Navigation from '../lib/Navigation';
 import * as types from '../actions/actionsTypes';
-import { setServer, addServer } from '../actions/server';
-import * as NavigationService from '../containers/routes/NavigationService';
+import { selectServerRequest } from '../actions/server';
 import database from '../lib/realm';
 import RocketChat from '../lib/rocketchat';
+import EventEmitter from '../utils/events';
+import { appStart } from '../actions';
+import { isIOS } from '../utils/deviceInfo';
 
-const navigate = function* go({ server, params, sameServer = true }) {
-	const user = yield AsyncStorage.getItem(`${ RocketChat.TOKEN_KEY }-${ server }`);
-	if (user) {
-		const { rid, path } = params;
-		if (rid) {
-			const canOpenRoom = yield RocketChat.canOpenRoom({ rid, path });
-			if (canOpenRoom) {
-				return yield call(NavigationService.goRoom, { rid: params.rid });
-			}
-		}
-		if (!sameServer) {
-			yield call(NavigationService.goRoomsList);
+const roomTypes = {
+	channel: 'c', direct: 'd', group: 'p'
+};
+
+const navigate = function* navigate({ params }) {
+	yield put(appStart('inside'));
+	if (params.rid) {
+		const canOpenRoom = yield RocketChat.canOpenRoom(params);
+		if (canOpenRoom) {
+			const [type, name] = params.path.split('/');
+			yield Navigation.navigate('RoomsListView');
+			Navigation.navigate('RoomView', { rid: params.rid, name, t: roomTypes[type] });
 		}
 	}
 };
 
 const handleOpen = function* handleOpen({ params }) {
-	const isReady = yield select(state => state.app.ready);
-	const server = yield select(state => state.server.server);
-
-	if (!isReady) {
-		yield take(types.APP.READY);
-	}
-
 	if (!params.host) {
 		return;
 	}
 
-	const host = `https://${ params.host }`;
-
-	try {
-		yield RocketChat.testServer(host);
-	} catch (error) {
-		return;
+	if (isIOS) {
+		yield RNUserDefaults.setName('group.ios.chat.rocket');
 	}
+
+	let { host } = params;
+	if (!/^(http|https)/.test(host)) {
+		host = `https://${ params.host }`;
+	}
+	// remove last "/" from host
+	if (host.slice(-1) === '/') {
+		host = host.slice(0, host.length - 1);
+	}
+
+	const [server, user] = yield all([
+		RNUserDefaults.get('currentServer'),
+		RNUserDefaults.get(`${ RocketChat.TOKEN_KEY }-${ host }`)
+	]);
 
 	// TODO: needs better test
 	// if deep link is from same server
 	if (server === host) {
-		yield navigate({ server, params });
-	} else { // if deep link is from a different server
+		if (user) {
+			const connected = yield select(state => state.server.connected);
+			if (!connected) {
+				yield put(selectServerRequest(host));
+				yield take(types.SERVER.SELECT_SUCCESS);
+			}
+			yield navigate({ params });
+		} else {
+			yield put(appStart('outside'));
+		}
+	} else {
 		// search if deep link's server already exists
 		const servers = yield database.databases.serversDB.objects('servers').filtered('id = $0', host); // TODO: need better test
-		if (servers.length) {
-			// if server exists, select it
-			yield put(setServer(servers[0].id));
-			yield delay(2000);
-			yield navigate({ server: servers[0].id, params, sameServer: false });
+		if (servers.length && user) {
+			yield put(selectServerRequest(host));
+			yield take(types.SERVER.SELECT_SUCCESS);
+			yield navigate({ params });
 		} else {
-			yield put(addServer(host));
+			// if deep link is from a different server
+			const result = yield RocketChat.getServerInfo(server);
+			if (!result.success) {
+				return;
+			}
+			Navigation.navigate('OnboardingView', { previousServer: server });
+			yield delay(1000);
+			EventEmitter.emit('NewServer', { server: host });
 		}
 	}
 };

@@ -1,16 +1,21 @@
 import { StyleSheet } from 'react-native';
 
+import sharedStyles from '../Styles';
+import { COLOR_BACKGROUND_CONTAINER, COLOR_WHITE } from '../../constants/colors';
+
 export default StyleSheet.create({
 	container: {
 		flex: 1,
+		backgroundColor: COLOR_WHITE
+	},
+	scroll: {
+		flex: 1,
 		flexDirection: 'column',
-		backgroundColor: '#ffffff',
+		backgroundColor: COLOR_WHITE,
 		padding: 10
 	},
 	item: {
 		padding: 10,
-		// borderColor: '#EBEDF1',
-		// borderTopWidth: StyleSheet.hairlineWidth,
 		justifyContent: 'center'
 	},
 	avatarContainer: {
@@ -27,27 +32,29 @@ export default StyleSheet.create({
 		flexDirection: 'row'
 	},
 	roomTitle: {
-		fontSize: 18
+		fontSize: 18,
+		...sharedStyles.textColorNormal,
+		...sharedStyles.textMedium
 	},
-	roomDescription: {
-		fontSize: 14,
-		color: '#ccc',
-		paddingTop: 10
+	roomTitleRow: {
+		flexDirection: 'row',
+		alignItems: 'center'
 	},
 	status: {
-		borderRadius: 24,
-		width: 24,
-		height: 24,
 		borderWidth: 4,
 		bottom: -4,
 		right: -4
 	},
 	itemLabel: {
-		fontWeight: '600',
-		marginBottom: 10
+		marginBottom: 10,
+		fontSize: 14,
+		...sharedStyles.textColorNormal,
+		...sharedStyles.textMedium
 	},
 	itemContent: {
-		color: '#ccc'
+		fontSize: 14,
+		...sharedStyles.textColorDescription,
+		...sharedStyles.textRegular
 	},
 	itemContent__empty: {
 		fontStyle: 'italic'
@@ -57,10 +64,15 @@ export default StyleSheet.create({
 		flexWrap: 'wrap'
 	},
 	roleBadge: {
-		padding: 8,
-		backgroundColor: '#ddd',
+		padding: 6,
+		backgroundColor: COLOR_BACKGROUND_CONTAINER,
 		borderRadius: 2,
-		marginRight: 5,
-		marginBottom: 5
+		marginRight: 6,
+		marginBottom: 6
+	},
+	role: {
+		fontSize: 14,
+		...sharedStyles.textColorNormal,
+		...sharedStyles.textRegular
 	}
 });
