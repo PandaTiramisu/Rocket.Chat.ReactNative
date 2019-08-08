@@ -1,84 +1,77 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { View, StyleSheet, TouchableOpacity, Image, Platform } from 'react-native';
-import Modal from 'react-native-modal';
-import VideoPlayer from 'react-native-video-controls';
+import { StyleSheet } from 'react-native';
+import Touchable from 'react-native-platform-touchable';
+import isEqual from 'deep-equal';
+
 import Markdown from './Markdown';
 import openLink from '../../utils/openLink';
+import { isIOS } from '../../utils/deviceInfo';
+import { CustomIcon } from '../../lib/Icons';
+import { formatAttachmentUrl } from '../../lib/utils';
 
-const SUPPORTED_TYPES = ['video/quicktime', 'video/mp4', ...(Platform.OS === 'ios' ? [] : ['video/webm', 'video/3gp', 'video/mkv'])];
+const SUPPORTED_TYPES = ['video/quicktime', 'video/mp4', ...(isIOS ? [] : ['video/webm', 'video/3gp', 'video/mkv'])];
 const isTypeSupported = type => SUPPORTED_TYPES.indexOf(type) !== -1;
 
 const styles = StyleSheet.create({
-	container: {
+	button: {
 		flex: 1,
-		height: 100,
-		margin: 5
+		borderRadius: 4,
+		height: 150,
+		backgroundColor: '#1f2329',
+		marginBottom: 6,
+		alignItems: 'center',
+		justifyContent: 'center'
 	},
 	modal: {
 		margin: 0,
 		backgroundColor: '#000'
 	},
 	image: {
-		flex: 1,
-		width: null,
-		height: null,
-		resizeMode: 'contain'
+		color: 'white'
 	}
 });
 
-export default class Video extends React.PureComponent {
-	static propTypes = {
-		file: PropTypes.object.isRequired,
-		baseUrl: PropTypes.string.isRequired,
-		user: PropTypes.object.isRequired
+const Video = React.memo(({
+	file, baseUrl, user, useMarkdown, onOpenFileModal, getCustomEmoji
+}) => {
+	if (!baseUrl) {
+		return null;
 	}
 
-	state = { isVisible: false };
-
-	toggleModal() {
-		this.setState({
-			isVisible: !this.state.isVisible
-		});
-	}
-
-	open() {
-		if (isTypeSupported(this.props.file.video_type)) {
-			return this.toggleModal();
+	const onPress = () => {
+		if (isTypeSupported(file.video_type)) {
+			return onOpenFileModal(file);
 		}
-		openLink(this.state.uri);
-	}
+		const uri = formatAttachmentUrl(file.video_url, user.id, user.token, baseUrl);
+		openLink(uri);
+	};
 
-	render() {
-		const { isVisible } = this.state;
-		const { video_url, description } = this.props.file;
-		const { baseUrl, user } = this.props;
-		const uri = `${ baseUrl }${ video_url }?rc_uid=${ user.id }&rc_token=${ user.token }`;
-		return (
-			<View>
-				<TouchableOpacity
-					style={styles.container}
-					onPress={() => this.open()}
-				>
-					<Image
-						source={require('../../../static/images/logo.png')}
-						style={styles.image}
-					/>
-					<Markdown msg={description} />
-				</TouchableOpacity>
-				<Modal
-					isVisible={isVisible}
-					style={styles.modal}
-					supportedOrientations={['portrait', 'landscape']}
-					onBackButtonPress={() => this.toggleModal()}
-				>
-					<VideoPlayer
-						source={{ uri }}
-						onBack={() => this.toggleModal()}
-						disableVolume
-					/>
-				</Modal>
-			</View>
-		);
-	}
-}
+	return (
+		<React.Fragment>
+			<Touchable
+				onPress={onPress}
+				style={styles.button}
+				background={Touchable.Ripple('#fff')}
+			>
+				<CustomIcon
+					name='play'
+					size={54}
+					style={styles.image}
+				/>
+			</Touchable>
+			<Markdown msg={file.description} baseUrl={baseUrl} username={user.username} getCustomEmoji={getCustomEmoji} useMarkdown={useMarkdown} />
+		</React.Fragment>
+	);
+}, (prevProps, nextProps) => isEqual(prevProps.file, nextProps.file));
+
+Video.propTypes = {
+	file: PropTypes.object,
+	baseUrl: PropTypes.string,
+	user: PropTypes.object,
+	useMarkdown: PropTypes.bool,
+	onOpenFileModal: PropTypes.func,
+	getCustomEmoji: PropTypes.func
+};
+
+export default Video;

@@ -1,161 +1,146 @@
-import React from 'react';
-import { Text, View, Platform, TouchableOpacity } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
+import React, { Component } from 'react';
 import PropTypes from 'prop-types';
 import { connect } from 'react-redux';
-import { HeaderBackButton } from 'react-navigation';
+import { responsive } from 'react-native-responsive-ui';
+import equal from 'deep-equal';
 
-import RocketChat from '../../../lib/rocketchat';
-import realm from '../../../lib/realm';
-import Avatar from '../../../containers/Avatar';
-import { STATUS_COLORS } from '../../../constants/colors';
-import styles from './styles';
-import { closeRoom } from '../../../actions/room';
-import Touch from '../../../utils/touch';
+import database, { safeAddListener } from '../../../lib/realm';
+import Header from './Header';
+import RightButtons from './RightButtons';
 
-
-@connect(state => ({
-	user: state.login.user,
-	baseUrl: state.settings.Site_Url || state.server ? state.server.server : '',
-	activeUsers: state.activeUsers
-}), dispatch => ({
-	close: () => dispatch(closeRoom())
-}))
-export default class RoomHeaderView extends React.PureComponent {
-	static propTypes = {
-		close: PropTypes.func.isRequired,
-		navigation: PropTypes.object.isRequired,
-		user: PropTypes.object.isRequired,
-		baseUrl: PropTypes.string,
-		activeUsers: PropTypes.object
+@responsive
+@connect((state, ownProps) => {
+	let status;
+	let userId;
+	let isLoggedUser = false;
+	const { rid, type } = ownProps;
+	if (type === 'd') {
+		if (state.login.user && state.login.user.id) {
+			const { id: loggedUserId } = state.login.user;
+			userId = rid.replace(loggedUserId, '').trim();
+			isLoggedUser = userId === loggedUserId;
+			if (isLoggedUser) {
+				status = state.login.user.status; // eslint-disable-line
+			}
+		}
 	}
+
+	return {
+		connecting: state.meteor.connecting,
+		userId,
+		isLoggedUser,
+		status
+	};
+})
+export default class RoomHeaderView extends Component {
+	static propTypes = {
+		title: PropTypes.string,
+		type: PropTypes.string,
+		prid: PropTypes.string,
+		tmid: PropTypes.string,
+		rid: PropTypes.string,
+		window: PropTypes.object,
+		status: PropTypes.string,
+		connecting: PropTypes.bool,
+		widthOffset: PropTypes.number,
+		isLoggedUser: PropTypes.bool,
+		userId: PropTypes.string
+	};
 
 	constructor(props) {
 		super(props);
+		this.usersTyping = database.memoryDatabase.objects('usersTyping').filtered('rid = $0', props.rid);
+		this.user = [];
+		if (props.type === 'd' && !props.isLoggedUser) {
+			this.user = database.memoryDatabase.objects('activeUsers').filtered('id == $0', props.userId);
+			safeAddListener(this.user, this.updateUser);
+		}
 		this.state = {
-			room: {},
-			roomName: props.navigation.state.params.room.name
+			usersTyping: this.usersTyping.slice() || [],
+			user: this.user[0] || {}
 		};
-		this.rid = props.navigation.state.params.room.rid;
-		this.room = realm.objects('subscriptions').filtered('rid = $0', this.rid);
-		this.room.addListener(this.updateState);
+		this.usersTyping.addListener(this.updateState);
 	}
 
-	componentDidMount() {
-		this.updateState();
+	shouldComponentUpdate(nextProps, nextState) {
+		const { usersTyping, user } = this.state;
+		const {
+			type, title, status, window, connecting
+		} = this.props;
+		if (nextProps.type !== type) {
+			return true;
+		}
+		if (nextProps.title !== title) {
+			return true;
+		}
+		if (nextProps.status !== status) {
+			return true;
+		}
+		if (nextProps.connecting !== connecting) {
+			return true;
+		}
+		if (nextProps.window.width !== window.width) {
+			return true;
+		}
+		if (nextProps.window.height !== window.height) {
+			return true;
+		}
+		if (!equal(nextState.usersTyping, usersTyping)) {
+			return true;
+		}
+		if (!equal(nextState.user, user)) {
+			return true;
+		}
+		return false;
 	}
+
 	componentWillUnmount() {
-		this.room.removeAllListeners();
-	}
-
-	getUserStatus() {
-		const userId = this.rid.replace(this.props.user.id, '').trim();
-		const userInfo = this.props.activeUsers[userId];
-		return (userInfo && userInfo.status) || 'offline';
-	}
-
-	getUserStatusLabel() {
-		const status = this.getUserStatus();
-		return status.charAt(0).toUpperCase() + status.slice(1);
+		this.usersTyping.removeAllListeners();
+		if (this.user && this.user.removeAllListeners) {
+			this.user.removeAllListeners();
+		}
 	}
 
 	updateState = () => {
-		this.setState({ room: this.room[0] });
-	};
-
-	isDirect = () => this.state.room && this.state.room.t === 'd';
-
-	renderLeft = () => (<HeaderBackButton
-		onPress={() => {
-			this.props.navigation.goBack(null);
-			requestAnimationFrame(() => this.props.close());
-		}}
-		tintColor='#292E35'
-		title='Back'
-		titleStyle={{ display: 'none' }}
-	/>);
-
-	renderTitle() {
-		if (!this.state.roomName) {
-			return null;
-		}
-
-		let accessibilityLabel = this.state.roomName;
-
-		if (this.isDirect()) {
-			accessibilityLabel += `, ${ this.getUserStatusLabel() }`;
-		}
-
-		return (
-			<TouchableOpacity
-				style={styles.titleContainer}
-				accessibilityLabel={accessibilityLabel}
-				accessibilityTraits='header'
-				onPress={() => this.props.navigation.navigate({ key: 'RoomInfo', routeName: 'RoomInfo', params: { rid: this.rid } })}
-			>
-				{this.isDirect() ?
-					<View style={[styles.status, { backgroundColor: STATUS_COLORS[this.getUserStatus()] }]} />
-					: null
-				}
-				<Avatar
-					text={this.state.roomName}
-					size={24}
-					style={{ marginRight: 5 }}
-					baseUrl={this.props.baseUrl}
-					type={this.state.room.t}
-				/>
-				<View style={{ flexDirection: 'column' }}>
-					<Text style={styles.title} allowFontScaling={false}>{this.state.roomName}</Text>
-					{this.isDirect() ?
-						<Text style={styles.userStatus} allowFontScaling={false}>{this.getUserStatusLabel()}</Text>
-						: null
-					}
-				</View>
-			</TouchableOpacity>
-		);
+		this.setState({ usersTyping: this.usersTyping.slice() });
 	}
 
-	renderRight = () => (
-		<View style={styles.right}>
-			<Touch
-				onPress={() => RocketChat.toggleFavorite(this.room[0].rid, this.room[0].f)}
-				accessibilityLabel='Star room'
-				accessibilityTraits='button'
-				underlayColor='#FFFFFF'
-				activeOpacity={0.5}
-			>
-				<View style={styles.headerButton}>
-					<Icon
-						name={`${ Platform.OS === 'ios' ? 'ios' : 'md' }-star${ this.room[0].f ? '' : '-outline' }`}
-						color='#f6c502'
-						size={24}
-						backgroundColor='transparent'
-					/>
-				</View>
-			</Touch>
-			<TouchableOpacity
-				style={styles.headerButton}
-				onPress={() => this.props.navigation.navigate({ key: 'RoomActions', routeName: 'RoomActions', params: { rid: this.room[0].rid } })}
-				accessibilityLabel='Room actions'
-				accessibilityTraits='button'
-			>
-				<Icon
-					name={Platform.OS === 'ios' ? 'ios-more' : 'md-more'}
-					color='#292E35'
-					size={24}
-					backgroundColor='transparent'
-				/>
-			</TouchableOpacity>
-		</View>
-	);
+	updateUser = () => {
+		if (this.user.length) {
+			this.setState({ user: this.user[0] });
+		}
+	}
 
 	render() {
+		const { usersTyping, user } = this.state;
+		const {
+			window, title, type, prid, tmid, widthOffset, isLoggedUser, status: userStatus, connecting
+		} = this.props;
+		let status = 'offline';
+
+		if (type === 'd') {
+			if (isLoggedUser) {
+				status = userStatus;
+			} else {
+				status = user.status || 'offline';
+			}
+		}
+
 		return (
-			<View style={styles.header}>
-				{this.renderLeft()}
-				{this.renderTitle()}
-				{this.renderRight()}
-			</View>
+			<Header
+				prid={prid}
+				tmid={tmid}
+				title={title}
+				type={type}
+				status={status}
+				width={window.width}
+				height={window.height}
+				usersTyping={usersTyping}
+				widthOffset={widthOffset}
+				connecting={connecting}
+			/>
 		);
 	}
 }
+
+export { RightButtons };

@@ -1,181 +1,155 @@
-import { AsyncStorage } from 'react-native';
-import { put, call, takeLatest, select, all, take } from 'redux-saga/effects';
-import { Answers } from 'react-native-fabric';
-import * as types from '../actions/actionsTypes';
 import {
-	loginRequest,
-	loginSubmit,
-	registerRequest,
-	registerIncomplete,
-	loginSuccess,
-	loginFailure,
-	logout,
-	setToken,
-	registerSuccess,
-	setUsernameRequest,
-	setUsernameSuccess,
-	forgotPasswordSuccess,
-	forgotPasswordFailure
-} from '../actions/login';
+	put, call, takeLatest, select, take, fork, cancel
+} from 'redux-saga/effects';
+import RNUserDefaults from 'rn-user-defaults';
+import moment from 'moment';
+import 'moment/min/locales';
+
+import * as types from '../actions/actionsTypes';
+import { appStart } from '../actions';
+import { serverFinishAdd, selectServerRequest } from '../actions/server';
+import { loginFailure, loginSuccess, setUser } from '../actions/login';
+import { roomsRequest } from '../actions/rooms';
+import { toMomentLocale } from '../utils/moment';
 import RocketChat from '../lib/rocketchat';
-import * as NavigationService from '../containers/routes/NavigationService';
+import log from '../utils/log';
+import I18n from '../i18n';
+import database from '../lib/realm';
+import EventEmitter from '../utils/events';
 
-const getUser = state => state.login;
 const getServer = state => state.server.server;
-const getIsConnected = state => state.meteor.connected;
-const loginCall = args => ((args.resume || args.oauth) ? RocketChat.login(args) : RocketChat.loginWithPassword(args));
-const registerCall = args => RocketChat.register(args);
-const setUsernameCall = args => RocketChat.setUsername(args);
+const loginWithPasswordCall = args => RocketChat.loginWithPassword(args);
+const loginCall = args => RocketChat.login(args);
 const logoutCall = args => RocketChat.logout(args);
-const meCall = args => RocketChat.me(args);
-const forgotPasswordCall = args => RocketChat.forgotPassword(args);
-const userInfoCall = args => RocketChat.userInfo(args);
-
-const getToken = function* getToken() {
-	const currentServer = yield select(getServer);
-	const user = yield call([AsyncStorage, 'getItem'], `${ RocketChat.TOKEN_KEY }-${ currentServer }`);
-	if (user) {
-		try {
-			yield put(setToken(JSON.parse(user)));
-			yield call([AsyncStorage, 'setItem'], RocketChat.TOKEN_KEY, JSON.parse(user).token || '');
-			return JSON.parse(user);
-		} catch (e) {
-			console.log('getTokenerr', e);
-		}
-	} else {
-		return yield put(setToken());
-	}
-};
-
-const handleLoginWhenServerChanges = function* handleLoginWhenServerChanges() {
-	try {
-		const user = yield call(getToken);
-		if (user.token) {
-			yield put(loginRequest({ resume: user.token }));
-		}
-	} catch (e) {
-		console.log(e);
-	}
-};
-
-const saveToken = function* saveToken() {
-	const [server, user] = yield all([select(getServer), select(getUser)]);
-	yield AsyncStorage.setItem(RocketChat.TOKEN_KEY, user.token);
-	yield AsyncStorage.setItem(`${ RocketChat.TOKEN_KEY }-${ server }`, JSON.stringify(user));
-	const token = yield AsyncStorage.getItem('pushId');
-	if (token) {
-		RocketChat.registerPushToken(user.user.id, token);
-	}
-	Answers.logLogin('Email', true, { server });
-};
 
 const handleLoginRequest = function* handleLoginRequest({ credentials }) {
 	try {
-		const server = yield select(getServer);
-		const user = yield call(loginCall, credentials);
-
-		// GET /me from REST API
-		const me = yield call(meCall, { server, token: user.token, userId: user.id });
-
-		// if user has username
-		if (me.username) {
-			const userInfo = yield call(userInfoCall, { server, token: user.token, userId: user.id });
-			user.username = userInfo.user.username;
-			if (userInfo.user.roles) {
-				user.roles = userInfo.user.roles;
-			}
+		let result;
+		if (credentials.resume) {
+			result = yield call(loginCall, credentials);
 		} else {
-			yield put(registerIncomplete());
+			result = yield call(loginWithPasswordCall, credentials);
 		}
-		yield put(loginSuccess(user));
-	} catch (err) {
-		if (err.error === 403) {
-			return yield put(logout());
-		}
-		yield put(loginFailure(err));
+		return yield put(loginSuccess(result));
+	} catch (error) {
+		yield put(loginFailure(error));
 	}
 };
 
-const handleLoginSubmit = function* handleLoginSubmit({ credentials }) {
-	yield put(loginRequest(credentials));
+const fetchPermissions = function* fetchPermissions() {
+	yield RocketChat.getPermissions();
 };
 
-const handleRegisterSubmit = function* handleRegisterSubmit({ credentials }) {
-	yield put(registerRequest(credentials));
+const fetchCustomEmojis = function* fetchCustomEmojis() {
+	yield RocketChat.getCustomEmojis();
 };
 
-const handleRegisterRequest = function* handleRegisterRequest({ credentials }) {
+const fetchRoles = function* fetchRoles() {
+	yield RocketChat.getRoles();
+};
+
+const fetchSlashCommands = function* fetchSlashCommands() {
+	yield RocketChat.getSlashCommands();
+};
+
+const registerPushToken = function* registerPushToken() {
+	yield RocketChat.registerPushToken();
+};
+
+const fetchUserPresence = function* fetchUserPresence() {
+	yield RocketChat.getUserPresence();
+};
+
+const handleLoginSuccess = function* handleLoginSuccess({ user }) {
 	try {
-		yield call(registerCall, { credentials });
-		yield put(registerSuccess(credentials));
-	} catch (err) {
-		yield put(loginFailure(err));
-	}
-};
+		const adding = yield select(state => state.server.adding);
+		yield RNUserDefaults.set(RocketChat.TOKEN_KEY, user.token);
 
-const handleRegisterSuccess = function* handleRegisterSuccess({ credentials }) {
-	yield put(loginSubmit({
-		username: credentials.email,
-		password: credentials.pass
-	}));
-};
+		const server = yield select(getServer);
+		yield put(roomsRequest());
+		yield fork(fetchPermissions);
+		yield fork(fetchCustomEmojis);
+		yield fork(fetchRoles);
+		yield fork(fetchSlashCommands);
+		yield fork(registerPushToken);
+		yield fork(fetchUserPresence);
 
-const handleSetUsernameSubmit = function* handleSetUsernameSubmit({ credentials }) {
-	yield put(setUsernameRequest(credentials));
-};
+		I18n.locale = user.language;
+		moment.locale(toMomentLocale(user.language));
 
-const handleSetUsernameRequest = function* handleSetUsernameRequest({ credentials }) {
-	try {
-		yield call(setUsernameCall, { credentials });
-		yield put(setUsernameSuccess());
-	} catch (err) {
-		yield put(loginFailure(err));
+		const { serversDB } = database.databases;
+		serversDB.write(() => {
+			try {
+				serversDB.create('user', user, true);
+			} catch (e) {
+				log('err_set_user_token', e);
+			}
+		});
+
+		yield RNUserDefaults.set(`${ RocketChat.TOKEN_KEY }-${ server }`, user.id);
+		yield put(setUser(user));
+		EventEmitter.emit('connected');
+
+		if (!user.username) {
+			yield put(appStart('setUsername'));
+		} else if (adding) {
+			yield put(serverFinishAdd());
+			yield put(appStart('inside'));
+		} else {
+			yield put(appStart('inside'));
+		}
+	} catch (e) {
+		log('err_handle_login_success', e);
 	}
 };
 
 const handleLogout = function* handleLogout() {
 	const server = yield select(getServer);
 	if (server) {
-		yield call(logoutCall, { server });
+		try {
+			yield call(logoutCall, { server });
+			const { serversDB } = database.databases;
+			// all servers
+			const servers = yield serversDB.objects('servers');
+			// filter logging out server and delete it
+			const serverRecord = servers.filtered('id = $0', server);
+			serversDB.write(() => {
+				serversDB.delete(serverRecord);
+			});
+			// see if there's other logged in servers and selects first one
+			if (servers.length > 0) {
+				const newServer = servers[0].id;
+				const token = yield RNUserDefaults.get(`${ RocketChat.TOKEN_KEY }-${ newServer }`);
+				if (token) {
+					return yield put(selectServerRequest(newServer));
+				}
+			}
+			// if there's no servers, go outside
+			yield put(appStart('outside'));
+		} catch (e) {
+			yield put(appStart('outside'));
+			log('err_handle_logout', e);
+		}
 	}
 };
 
-const handleRegisterIncomplete = function* handleRegisterIncomplete() {
-	yield call(NavigationService.navigate, 'Register');
-};
-
-const handleForgotPasswordRequest = function* handleForgotPasswordRequest({ email }) {
-	try {
-		yield call(forgotPasswordCall, email);
-		yield put(forgotPasswordSuccess());
-	} catch (err) {
-		yield put(forgotPasswordFailure(err));
+const handleSetUser = function handleSetUser({ user }) {
+	if (user && user.language) {
+		I18n.locale = user.language;
+		moment.locale(toMomentLocale(user.language));
 	}
-};
-
-const watchLoginOpen = function* watchLoginOpen() {
-	const isConnected = yield select(getIsConnected);
-	if (!isConnected) {
-		yield take(types.METEOR.SUCCESS);
-	}
-	const sub = yield RocketChat.subscribe('meteor.loginServiceConfiguration');
-	yield take(types.LOGIN.CLOSE);
-	sub.unsubscribe().catch(e => alert(e));
 };
 
 const root = function* root() {
-	yield takeLatest(types.METEOR.SUCCESS, handleLoginWhenServerChanges);
 	yield takeLatest(types.LOGIN.REQUEST, handleLoginRequest);
-	yield takeLatest(types.LOGIN.SUCCESS, saveToken);
-	yield takeLatest(types.LOGIN.SUBMIT, handleLoginSubmit);
-	yield takeLatest(types.LOGIN.REGISTER_REQUEST, handleRegisterRequest);
-	yield takeLatest(types.LOGIN.REGISTER_SUBMIT, handleRegisterSubmit);
-	yield takeLatest(types.LOGIN.REGISTER_SUCCESS, handleRegisterSuccess);
-	yield takeLatest(types.LOGIN.REGISTER_INCOMPLETE, handleRegisterIncomplete);
-	yield takeLatest(types.LOGIN.SET_USERNAME_SUBMIT, handleSetUsernameSubmit);
-	yield takeLatest(types.LOGIN.SET_USERNAME_REQUEST, handleSetUsernameRequest);
 	yield takeLatest(types.LOGOUT, handleLogout);
-	yield takeLatest(types.FORGOT_PASSWORD.REQUEST, handleForgotPasswordRequest);
-	yield takeLatest(types.LOGIN.OPEN, watchLoginOpen);
+	yield takeLatest(types.USER.SET, handleSetUser);
+
+	while (true) {
+		const params = yield take(types.LOGIN.SUCCESS);
+		const loginSuccessTask = yield fork(handleLoginSuccess, params);
+		yield take(types.SERVER.SELECT_REQUEST);
+		yield cancel(loginSuccessTask);
+	}
 };
 export default root;

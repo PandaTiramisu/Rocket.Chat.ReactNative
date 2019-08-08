@@ -3,7 +3,8 @@ import { View, Text, Switch } from 'react-native';
 import PropTypes from 'prop-types';
 
 import styles from './styles';
-import sharedStyles from '../../views/Styles';
+import sharedStyles from '../Styles';
+import { SWITCH_TRACK_COLOR } from '../../constants/colors';
 
 export default class SwitchContainer extends React.PureComponent {
 	static propTypes = {
@@ -13,12 +14,13 @@ export default class SwitchContainer extends React.PureComponent {
 		leftLabelSecondary: PropTypes.string,
 		rightLabelPrimary: PropTypes.string,
 		rightLabelSecondary: PropTypes.string,
-		onValueChange: PropTypes.func
+		onValueChange: PropTypes.func,
+		testID: PropTypes.string
 	}
 
 	render() {
 		const {
-			value, disabled, onValueChange, leftLabelPrimary, leftLabelSecondary, rightLabelPrimary, rightLabelSecondary
+			value, disabled, onValueChange, leftLabelPrimary, leftLabelSecondary, rightLabelPrimary, rightLabelSecondary, testID
 		} = this.props;
 		return (
 			[
@@ -32,6 +34,8 @@ export default class SwitchContainer extends React.PureComponent {
 						onValueChange={onValueChange}
 						value={value}
 						disabled={disabled}
+						trackColor={SWITCH_TRACK_COLOR}
+						testID={testID}
 					/>
 					<View style={styles.switchLabelContainer}>
 						<Text style={styles.switchLabelPrimary}>{rightLabelPrimary}</Text>

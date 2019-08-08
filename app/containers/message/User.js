@@ -2,82 +2,68 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import { View, Text, StyleSheet } from 'react-native';
 import moment from 'moment';
-import Icon from 'react-native-vector-icons/FontAwesome';
-import Avatar from '../Avatar';
+
+import MessageError from './MessageError';
+import sharedStyles from '../../views/Styles';
+import messageStyles from './styles';
 
 const styles = StyleSheet.create({
-	username: {
-		fontWeight: 'bold'
-	},
-	usernameView: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		marginBottom: 2
-	},
-	alias: {
-		fontSize: 10,
-		color: '#888',
-		paddingLeft: 5
-	},
-	time: {
-		fontSize: 10,
-		color: '#888',
-		paddingLeft: 5
-	},
-	edited: {
-		marginLeft: 5,
+	container: {
+		flex: 1,
 		flexDirection: 'row',
 		alignItems: 'center'
+	},
+	username: {
+		fontSize: 16,
+		lineHeight: 22,
+		...sharedStyles.textColorNormal,
+		...sharedStyles.textMedium
+	},
+	titleContainer: {
+		flex: 1,
+		flexDirection: 'row',
+		alignItems: 'center'
+	},
+	alias: {
+		fontSize: 14,
+		...sharedStyles.textColorDescription,
+		...sharedStyles.textRegular
 	}
 });
 
-export default class User extends React.PureComponent {
-	static propTypes = {
-		item: PropTypes.object.isRequired,
-		Message_TimeFormat: PropTypes.string.isRequired,
-		onPress: PropTypes.func,
-		baseUrl: PropTypes.string
-	}
+const User = React.memo(({
+	isHeader, useRealName, author, alias, ts, timeFormat, hasError, ...props
+}) => {
+	if (isHeader || hasError) {
+		const username = (useRealName && author.name) || author.username;
+		const aliasUsername = alias ? (<Text style={styles.alias}> @{username}</Text>) : null;
+		const time = moment(ts).format(timeFormat);
 
-	renderEdited(item) {
-		if (!item.editedBy) {
-			return null;
-		}
 		return (
-			<View style={styles.edited}>
-				<Icon name='pencil-square-o' color='#888' size={10} />
-				<Avatar
-					style={{ marginLeft: 5 }}
-					text={item.editedBy.username}
-					size={20}
-					baseUrl={this.props.baseUrl}
-					avatar={item.avatar}
-				/>
+			<View style={styles.container}>
+				<View style={styles.titleContainer}>
+					<Text style={styles.username} numberOfLines={1}>
+						{alias || username}
+						{aliasUsername}
+					</Text>
+				</View>
+				<Text style={messageStyles.time}>{time}</Text>
+				{ hasError && <MessageError hasError={hasError} {...props} /> }
 			</View>
 		);
 	}
+	return null;
+});
 
-	render() {
-		const { item } = this.props;
+User.propTypes = {
+	isHeader: PropTypes.bool,
+	hasError: PropTypes.bool,
+	useRealName: PropTypes.bool,
+	author: PropTypes.object,
+	alias: PropTypes.string,
+	ts: PropTypes.instanceOf(Date),
+	timeFormat: PropTypes.string
+};
+User.displayName = 'MessageUser';
 
-		const extraStyle = {};
-		if (item.temp) {
-			extraStyle.opacity = 0.3;
-		}
-
-		const username = item.alias || item.u.username;
-		const aliasUsername = item.alias ? (<Text style={styles.alias}>@{item.u.username}</Text>) : null;
-		const time = moment(item.ts).format(this.props.Message_TimeFormat);
-
-		return (
-			<View style={styles.usernameView}>
-				<Text onPress={this.props.onPress} style={styles.username}>
-					{username}
-				</Text>
-				{aliasUsername}
-				<Text style={styles.time}>{time}</Text>
-				{this.renderEdited(item)}
-			</View>
-		);
-	}
-}
+export default User;

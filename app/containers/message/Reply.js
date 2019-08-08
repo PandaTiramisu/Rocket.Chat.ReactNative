@@ -1,47 +1,50 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import PropTypes from 'prop-types';
 import moment from 'moment';
+import Touchable from 'react-native-platform-touchable';
+import isEqual from 'deep-equal';
 
 import Markdown from './Markdown';
-import QuoteMark from './QuoteMark';
-import Avatar from '../Avatar';
 import openLink from '../../utils/openLink';
-
+import sharedStyles from '../../views/Styles';
+import { COLOR_BACKGROUND_CONTAINER, COLOR_BORDER } from '../../constants/colors';
 
 const styles = StyleSheet.create({
 	button: {
 		flex: 1,
 		flexDirection: 'row',
 		alignItems: 'center',
-		marginTop: 2,
-		alignSelf: 'flex-end'
-	},
-	quoteSign: {
-		borderWidth: 2,
-		borderRadius: 4,
-		borderColor: '#a0a0a0',
-		height: '100%',
-		marginRight: 5
+		marginTop: 6,
+		alignSelf: 'flex-end',
+		backgroundColor: COLOR_BACKGROUND_CONTAINER,
+		borderColor: COLOR_BORDER,
+		borderWidth: 1,
+		borderRadius: 4
 	},
 	attachmentContainer: {
 		flex: 1,
-		flexDirection: 'column'
+		borderRadius: 4,
+		flexDirection: 'column',
+		padding: 15
 	},
 	authorContainer: {
+		flex: 1,
 		flexDirection: 'row',
 		alignItems: 'center'
 	},
 	author: {
-		fontWeight: 'bold',
-		marginHorizontal: 5,
-		flex: 1
+		flex: 1,
+		fontSize: 16,
+		...sharedStyles.textColorNormal,
+		...sharedStyles.textMedium
 	},
 	time: {
-		fontSize: 10,
-		fontWeight: 'normal',
-		color: '#888',
-		marginLeft: 5
+		fontSize: 12,
+		marginLeft: 10,
+		...sharedStyles.textColorDescription,
+		...sharedStyles.textRegular,
+		fontWeight: '300'
 	},
 	fieldsContainer: {
 		flex: 1,
@@ -53,105 +56,144 @@ const styles = StyleSheet.create({
 		padding: 10
 	},
 	fieldTitle: {
-		fontWeight: 'bold'
+		fontSize: 14,
+		...sharedStyles.textColorNormal,
+		...sharedStyles.textSemibold
+	},
+	fieldValue: {
+		fontSize: 14,
+		...sharedStyles.textColorNormal,
+		...sharedStyles.textRegular
+	},
+	marginTop: {
+		marginTop: 4
 	}
 });
 
-const onPress = (attachment) => {
-	const url = attachment.title_link || attachment.author_link;
-	if (!url) {
-		return;
+const Title = React.memo(({ attachment, timeFormat }) => {
+	if (!attachment.author_name) {
+		return null;
 	}
-	openLink(attachment.title_link || attachment.author_link);
-};
-
-// Support <http://link|Text>
-const formatText = text =>
-	text.replace(
-		new RegExp('(?:<|<)((?:https|http):\\/\\/[^\\|]+)\\|(.+?)(?=>|>)(?:>|>)', 'gm'),
-		(match, url, title) => `[${ title }](${ url })`
+	const time = attachment.ts ? moment(attachment.ts).format(timeFormat) : null;
+	return (
+		<View style={styles.authorContainer}>
+			{attachment.author_name ? <Text style={styles.author}>{attachment.author_name}</Text> : null}
+			{time ? <Text style={styles.time}>{ time }</Text> : null}
+		</View>
 	);
+}, () => true);
 
-const Reply = ({ attachment, timeFormat }) => {
+const Description = React.memo(({
+	attachment, baseUrl, user, getCustomEmoji, useMarkdown
+}) => {
+	const text = attachment.text || attachment.title;
+	if (!text) {
+		return null;
+	}
+	return (
+		<Markdown
+			msg={text}
+			baseUrl={baseUrl}
+			username={user.username}
+			getCustomEmoji={getCustomEmoji}
+			useMarkdown={useMarkdown}
+		/>
+	);
+}, (prevProps, nextProps) => {
+	if (prevProps.attachment.text !== nextProps.attachment.text) {
+		return false;
+	}
+	if (prevProps.attachment.title !== nextProps.attachment.title) {
+		return false;
+	}
+	return true;
+});
+
+const Fields = React.memo(({ attachment }) => {
+	if (!attachment.fields) {
+		return null;
+	}
+	return (
+		<View style={styles.fieldsContainer}>
+			{attachment.fields.map(field => (
+				<View key={field.title} style={[styles.fieldContainer, { width: field.short ? '50%' : '100%' }]}>
+					<Text style={styles.fieldTitle}>{field.title}</Text>
+					<Text style={styles.fieldValue}>{field.value}</Text>
+				</View>
+			))}
+		</View>
+	);
+}, (prevProps, nextProps) => isEqual(prevProps.attachment.fields, nextProps.attachment.fields));
+
+const Reply = React.memo(({
+	attachment, timeFormat, baseUrl, user, index, getCustomEmoji, useMarkdown
+}) => {
 	if (!attachment) {
 		return null;
 	}
 
-	const renderAvatar = () => {
-		if (!attachment.author_icon && !attachment.author_name) {
-			return null;
+	const onPress = () => {
+		let url = attachment.title_link || attachment.author_link;
+		if (!url) {
+			return;
 		}
-		return (
-			<Avatar
-				text={attachment.author_name}
-				size={16}
-				avatar={attachment.author_icon}
-			/>
-		);
-	};
-
-	const renderAuthor = () => (
-		attachment.author_name ? <Text style={styles.author}>{attachment.author_name}</Text> : null
-	);
-
-	const renderTime = () => {
-		const time = attachment.ts ? moment(attachment.ts).format(timeFormat) : null;
-		return time ? <Text style={styles.time}>{ time }</Text> : null;
-	};
-
-	const renderTitle = () => {
-		if (!(attachment.author_icon || attachment.author_name || attachment.ts)) {
-			return null;
+		if (attachment.type === 'file') {
+			url = `${ baseUrl }${ url }?rc_uid=${ user.id }&rc_token=${ user.token }`;
 		}
-		return (
-			<View style={styles.authorContainer}>
-				{renderAvatar()}
-				{renderAuthor()}
-				{renderTime()}
-			</View>
-		);
-	};
-
-	const renderText = () => (
-		attachment.text ? <Markdown msg={formatText(attachment.text)} /> : null
-	);
-
-	const renderFields = () => {
-		if (!attachment.fields) {
-			return null;
-		}
-
-		return (
-			<View style={styles.fieldsContainer}>
-				{attachment.fields.map(field => (
-					<View key={field.title} style={[styles.fieldContainer, { width: field.short ? '50%' : '100%' }]}>
-						<Text style={styles.fieldTitle}>{field.title}</Text>
-						<Text>{field.value}</Text>
-					</View>
-				))}
-			</View>
-		);
+		openLink(url);
 	};
 
 	return (
-		<TouchableOpacity
-			onPress={() => onPress(attachment)}
-			style={styles.button}
+		<Touchable
+			onPress={onPress}
+			style={[styles.button, index > 0 && styles.marginTop]}
+			background={Touchable.Ripple('#fff')}
 		>
-			<QuoteMark color={attachment.color} />
 			<View style={styles.attachmentContainer}>
-				{renderTitle()}
-				{renderText()}
-				{renderFields()}
-				{attachment.attachments && attachment.attachments.map(attach => <Reply key={attach.text} attachment={attach} timeFormat={timeFormat} />)}
+				<Title attachment={attachment} timeFormat={timeFormat} />
+				<Description
+					attachment={attachment}
+					timeFormat={timeFormat}
+					baseUrl={baseUrl}
+					user={user}
+					getCustomEmoji={getCustomEmoji}
+					useMarkdown={useMarkdown}
+				/>
+				<Fields attachment={attachment} />
 			</View>
-		</TouchableOpacity>
+		</Touchable>
 	);
-};
+}, (prevProps, nextProps) => isEqual(prevProps.attachment, nextProps.attachment));
 
 Reply.propTypes = {
-	attachment: PropTypes.object.isRequired,
-	timeFormat: PropTypes.string.isRequired
+	attachment: PropTypes.object,
+	timeFormat: PropTypes.string,
+	baseUrl: PropTypes.string,
+	user: PropTypes.object,
+	index: PropTypes.number,
+	useMarkdown: PropTypes.bool,
+	getCustomEmoji: PropTypes.func
 };
+Reply.displayName = 'MessageReply';
+
+Title.propTypes = {
+	attachment: PropTypes.object,
+	timeFormat: PropTypes.string
+};
+Title.displayName = 'MessageReplyTitle';
+
+Description.propTypes = {
+	attachment: PropTypes.object,
+	baseUrl: PropTypes.string,
+	user: PropTypes.object,
+	useMarkdown: PropTypes.bool,
+	getCustomEmoji: PropTypes.func
+};
+Description.displayName = 'MessageReplyDescription';
+
+Fields.propTypes = {
+	attachment: PropTypes.object
+};
+Fields.displayName = 'MessageReplyFields';
 
 export default Reply;

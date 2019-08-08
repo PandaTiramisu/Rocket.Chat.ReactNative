@@ -20,6 +20,7 @@ platform :ios do
     # ENV["SLACK_URL"] = "https://hooks.slack.com/services/..."
     # cocoapods
     # carthage
+    setup_circle_ci
     create_keychain(
       name: ENV["MATCH_KEYCHAIN_NAME"],
       password: ENV["MATCH_KEYCHAIN_PASSWORD"],
@@ -53,15 +54,16 @@ platform :ios do
     match(
       type: "appstore"
     ) # more information: https://codesigning.guide
+    get_provisioning_profile(app_identifier: "chat.rocket.reactnative.ShareExtension")
     pem()
-    gym(scheme: "RocketChatRN") # Build your app - more options available
+    gym(scheme: "RocketChatRN", workspace: "RocketChatRN.xcworkspace") # Build your app - more options available
     # frameit
   end
 
   desc "Build App for development"
   lane :build do |options|
     xcodebuild(
-      project: "RocketChatRN.xcodeproj",
+      workspace: "RocketChatRN.xcworkspace",
       scheme: "RocketChatRN",
       configuration: "Debug",
       clean: options[:clean],

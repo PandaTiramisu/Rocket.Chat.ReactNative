@@ -1,316 +1,269 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { View, TouchableHighlight, Text, TouchableOpacity, Vibration, ViewPropTypes } from 'react-native';
-import { connect } from 'react-redux';
-import Icon from 'react-native-vector-icons/MaterialIcons';
-import moment from 'moment';
-import equal from 'deep-equal';
 import { KeyboardUtils } from 'react-native-keyboard-input';
 
-import { actionsShow, errorActionsShow, toggleReactionPicker } from '../../actions/messages';
-import Image from './Image';
-import User from './User';
-import Avatar from '../Avatar';
-import Audio from './Audio';
-import Video from './Video';
-import Markdown from './Markdown';
-import Url from './Url';
-import Reply from './Reply';
-import ReactionsModal from './ReactionsModal';
-import Emoji from './Emoji';
-import messageStatus from '../../constants/messagesStatus';
-import styles from './styles';
+import Message from './Message';
+import debounce from '../../utils/debounce';
+import { SYSTEM_MESSAGES, getCustomEmoji, getMessageTranslation } from './utils';
+import messagesStatus from '../../constants/messagesStatus';
 
-@connect(state => ({
-	message: state.messages.message,
-	editing: state.messages.editing,
-	customEmojis: state.customEmojis
-}), dispatch => ({
-	actionsShow: actionMessage => dispatch(actionsShow(actionMessage)),
-	errorActionsShow: actionMessage => dispatch(errorActionsShow(actionMessage)),
-	toggleReactionPicker: message => dispatch(toggleReactionPicker(message))
-}))
-export default class Message extends React.Component {
+export default class MessageContainer extends React.Component {
 	static propTypes = {
-		status: PropTypes.any,
 		item: PropTypes.object.isRequired,
-		reactions: PropTypes.any.isRequired,
-		baseUrl: PropTypes.string.isRequired,
-		Message_TimeFormat: PropTypes.string.isRequired,
-		message: PropTypes.object.isRequired,
-		user: PropTypes.object.isRequired,
-		editing: PropTypes.bool,
-		errorActionsShow: PropTypes.func,
-		customEmojis: PropTypes.object,
-		toggleReactionPicker: PropTypes.func,
-		onReactionPress: PropTypes.func,
-		style: ViewPropTypes.style,
-		onLongPress: PropTypes.func,
+		user: PropTypes.shape({
+			id: PropTypes.string.isRequired,
+			username: PropTypes.string.isRequired,
+			token: PropTypes.string.isRequired
+		}),
+		timeFormat: PropTypes.string,
+		customThreadTimeFormat: PropTypes.string,
+		style: PropTypes.any,
+		archived: PropTypes.bool,
+		broadcast: PropTypes.bool,
+		previousItem: PropTypes.object,
 		_updatedAt: PropTypes.instanceOf(Date),
-		archived: PropTypes.bool
+		baseUrl: PropTypes.string,
+		Message_GroupingPeriod: PropTypes.number,
+		isReadReceiptEnabled: PropTypes.bool,
+		useRealName: PropTypes.bool,
+		useMarkdown: PropTypes.bool,
+		autoTranslateRoom: PropTypes.bool,
+		autoTranslateLanguage: PropTypes.string,
+		status: PropTypes.number,
+		onLongPress: PropTypes.func,
+		onReactionPress: PropTypes.func,
+		onDiscussionPress: PropTypes.func,
+		onThreadPress: PropTypes.func,
+		errorActionsShow: PropTypes.func,
+		replyBroadcast: PropTypes.func,
+		toggleReactionPicker: PropTypes.func,
+		fetchThreadName: PropTypes.func,
+		onOpenFileModal: PropTypes.func,
+		onReactionLongPress: PropTypes.func
 	}
 
 	static defaultProps = {
 		onLongPress: () => {},
 		_updatedAt: new Date(),
-		archived: false
+		archived: false,
+		broadcast: false
 	}
 
-	constructor(props) {
-		super(props);
-		this.state = { reactionsModal: false };
-		this.onClose = this.onClose.bind(this);
-	}
-
-	shouldComponentUpdate(nextProps, nextState) {
-		if (!equal(this.props.reactions, nextProps.reactions)) {
-			return true;
-		}
-		if (this.state.reactionsModal !== nextState.reactionsModal) {
-			return true;
-		}
-		return this.props._updatedAt.toGMTString() !== nextProps._updatedAt.toGMTString() || this.props.status !== nextProps.status;
-	}
-
-	onPress = () => {
-		KeyboardUtils.dismiss();
-	}
-
-	onLongPress() {
-		this.props.onLongPress(this.parseMessage());
-	}
-
-	onErrorPress() {
-		this.props.errorActionsShow(this.parseMessage());
-	}
-
-	onReactionPress(emoji) {
-		this.props.onReactionPress(emoji, this.props.item._id);
-	}
-	onClose() {
-		this.setState({ reactionsModal: false });
-	}
-	onReactionLongPress() {
-		this.setState({ reactionsModal: true });
-		Vibration.vibrate(50);
-	}
-
-	getInfoMessage() {
-		let message = '';
+	shouldComponentUpdate(nextProps) {
 		const {
-			t, role, msg, u
-		} = this.props.item;
+			status, item, _updatedAt, autoTranslateRoom
+		} = this.props;
 
-		if (t === 'rm') {
-			message = 'Message removed';
-		} else if (t === 'uj') {
-			message = 'Has joined the channel.';
-		} else if (t === 'r') {
-			message = `Room name changed to: ${ msg } by ${ u.username }`;
-		} else if (t === 'message_pinned') {
-			message = 'Message pinned';
-		} else if (t === 'ul') {
-			message = 'Has left the channel.';
-		} else if (t === 'ru') {
-			message = `User ${ msg } removed by ${ u.username }`;
-		} else if (t === 'au') {
-			message = `User ${ msg } added by ${ u.username }`;
-		} else if (t === 'user-muted') {
-			message = `User ${ msg } muted by ${ u.username }`;
-		} else if (t === 'user-unmuted') {
-			message = `User ${ msg } unmuted by ${ u.username }`;
-		} else if (t === 'subscription-role-added') {
-			message = `${ msg } was set ${ role } by ${ u.username }`;
-		} else if (t === 'subscription-role-removed') {
-			message = `${ msg } is no longer ${ role } by ${ u.username }`;
-		} else if (t === 'room_changed_description') {
-			message = `Room description changed to: ${ msg } by ${ u.username }`;
-		} else if (t === 'room_changed_announcement') {
-			message = `Room announcement changed to: ${ msg } by ${ u.username }`;
-		} else if (t === 'room_changed_topic') {
-			message = `Room topic changed to: ${ msg } by ${ u.username }`;
-		} else if (t === 'room_changed_privacy') {
-			message = `Room type changed to: ${ msg } by ${ u.username }`;
+		if (status !== nextProps.status) {
+			return true;
+		}
+		if (autoTranslateRoom !== nextProps.autoTranslateRoom) {
+			return true;
+		}
+		if (item.tmsg !== nextProps.item.tmsg) {
+			return true;
+		}
+		if (item.unread !== nextProps.item.unread) {
+			return true;
 		}
 
-		return message;
+		return _updatedAt.toISOString() !== nextProps._updatedAt.toISOString();
 	}
 
-	parseMessage = () => JSON.parse(JSON.stringify(this.props.item));
+	onPress = debounce(() => {
+		const { item } = this.props;
+		KeyboardUtils.dismiss();
 
-	isInfoMessage() {
-		return [
-			'r',
-			'au',
-			'ru',
-			'ul',
-			'uj',
-			'rm',
-			'user-muted',
-			'user-unmuted',
-			'message_pinned',
-			'subscription-role-added',
-			'subscription-role-removed',
-			'room_changed_description',
-			'room_changed_announcement',
-			'room_changed_topic',
-			'room_changed_privacy'
-		].includes(this.props.item.t);
-	}
-
-	isDeleted() {
-		return this.props.item.t === 'rm';
-	}
-
-	isTemp() {
-		return this.props.item.status === messageStatus.TEMP || this.props.item.status === messageStatus.ERROR;
-	}
-
-	hasError() {
-		return this.props.item.status === messageStatus.ERROR;
-	}
-
-	attachments() {
-		if (this.props.item.attachments.length === 0) {
-			return null;
+		if ((item.tlm || item.tmid)) {
+			this.onThreadPress();
 		}
+	}, 300, true);
 
-		const file = this.props.item.attachments[0];
-		const { baseUrl, user } = this.props;
-		if (file.image_type) {
-			return <Image file={file} baseUrl={baseUrl} user={user} />;
-		} else if (file.audio_type) {
-			return <Audio file={file} baseUrl={baseUrl} user={user} />;
-		} else if (file.video_type) {
-			return <Video file={file} baseUrl={baseUrl} user={user} />;
+	onLongPress = () => {
+		const { archived, onLongPress } = this.props;
+		if (this.isInfo || this.hasError || archived) {
+			return;
 		}
-
-		return <Reply attachment={file} timeFormat={this.props.Message_TimeFormat} />;
+		if (onLongPress) {
+			onLongPress(this.parseMessage());
+		}
 	}
 
-	renderMessageContent() {
-		if (this.isInfoMessage()) {
-			return <Text style={styles.textInfo}>{this.getInfoMessage()}</Text>;
+	onErrorPress = () => {
+		const { errorActionsShow } = this.props;
+		if (errorActionsShow) {
+			errorActionsShow(this.parseMessage());
 		}
-		const { item, customEmojis, baseUrl } = this.props;
-		return <Markdown msg={item.msg} customEmojis={customEmojis} baseUrl={baseUrl} />;
 	}
 
-	renderUrl() {
-		if (this.props.item.urls.length === 0) {
-			return null;
+	onReactionPress = (emoji) => {
+		const { onReactionPress, item } = this.props;
+		if (onReactionPress) {
+			onReactionPress(emoji, item._id);
 		}
-
-		return this.props.item.urls.map(url => (
-			<Url url={url} key={url.url} />
-		));
 	}
 
-	renderError = () => {
-		if (!this.hasError()) {
-			return null;
+	onReactionLongPress = () => {
+		const { onReactionLongPress, item } = this.props;
+		if (onReactionLongPress) {
+			onReactionLongPress(item);
 		}
-		return (
-			<TouchableOpacity onPress={() => this.onErrorPress()}>
-				<Icon name='error-outline' color='red' size={20} style={{ padding: 10, paddingRight: 12, paddingLeft: 0 }} />
-			</TouchableOpacity>
-		);
 	}
 
-	renderReaction(reaction) {
-		const reacted = reaction.usernames.findIndex(item => item.value === this.props.user.username) !== -1;
-		const reactedContainerStyle = reacted ? { borderColor: '#bde1fe', backgroundColor: '#f3f9ff' } : {};
-		const reactedCount = reacted ? { color: '#4fb0fc' } : {};
-		return (
-			<TouchableOpacity
-				onPress={() => this.onReactionPress(reaction.emoji)}
-				onLongPress={() => this.onReactionLongPress()}
-				key={reaction.emoji}
-			>
-				<View style={[styles.reactionContainer, reactedContainerStyle]}>
-					<Emoji
-						content={reaction.emoji}
-						standardEmojiStyle={styles.reactionEmoji}
-						customEmojiStyle={styles.reactionCustomEmoji}
-						customEmojis={this.props.customEmojis}
-					/>
-					<Text style={[styles.reactionCount, reactedCount]}>{ reaction.usernames.length }</Text>
-				</View>
-			</TouchableOpacity>
-		);
+	onDiscussionPress = () => {
+		const { onDiscussionPress, item } = this.props;
+		if (onDiscussionPress) {
+			onDiscussionPress(item);
+		}
 	}
 
-	renderReactions() {
-		if (this.props.item.reactions.length === 0) {
-			return null;
+	onThreadPress = () => {
+		const { onThreadPress, item } = this.props;
+		if (onThreadPress) {
+			onThreadPress(item);
 		}
-		return (
-			<View style={styles.reactionsContainer}>
-				{this.props.item.reactions.map(reaction => this.renderReaction(reaction))}
-				<TouchableOpacity
-					onPress={() => this.props.toggleReactionPicker(this.parseMessage())}
-					key='add-reaction'
-					style={styles.reactionContainer}
-				>
-					<Icon name='insert-emoticon' color='#aaaaaa' size={15} />
-				</TouchableOpacity>
-			</View>
-		);
+	}
+
+	get isHeader() {
+		const {
+			item, previousItem, broadcast, Message_GroupingPeriod
+		} = this.props;
+		if (this.hasError || (previousItem && previousItem.status === messagesStatus.ERROR)) {
+			return true;
+		}
+		if (previousItem && (
+			(previousItem.ts.toDateString() === item.ts.toDateString())
+			&& (previousItem.u.username === item.u.username)
+			&& !(previousItem.groupable === false || item.groupable === false || broadcast === true)
+			&& (item.ts - previousItem.ts < Message_GroupingPeriod * 1000)
+			&& (previousItem.tmid === item.tmid)
+		)) {
+			return false;
+		}
+		return true;
+	}
+
+	get isThreadReply() {
+		const {
+			item, previousItem
+		} = this.props;
+		if (previousItem && item.tmid && (previousItem.tmid !== item.tmid) && (previousItem._id !== item.tmid)) {
+			return true;
+		}
+		return false;
+	}
+
+	get isThreadSequential() {
+		const {
+			item, previousItem
+		} = this.props;
+		if (previousItem && item.tmid && ((previousItem.tmid === item.tmid) || (previousItem._id === item.tmid))) {
+			return true;
+		}
+		return false;
+	}
+
+	get isInfo() {
+		const { item } = this.props;
+		return SYSTEM_MESSAGES.includes(item.t);
+	}
+
+	get isTemp() {
+		const { item } = this.props;
+		return item.status === messagesStatus.TEMP || item.status === messagesStatus.ERROR;
+	}
+
+	get hasError() {
+		const { item } = this.props;
+		return item.status === messagesStatus.ERROR;
+	}
+
+	parseMessage = () => {
+		const { item } = this.props;
+		return JSON.parse(JSON.stringify(item));
+	}
+
+	toggleReactionPicker = () => {
+		const { toggleReactionPicker } = this.props;
+		if (toggleReactionPicker) {
+			toggleReactionPicker(this.parseMessage());
+		}
+	}
+
+	replyBroadcast = () => {
+		const { replyBroadcast } = this.props;
+		if (replyBroadcast) {
+			replyBroadcast(this.parseMessage());
+		}
 	}
 
 	render() {
 		const {
-			item, message, editing, baseUrl, customEmojis, style, archived
+			item, user, style, archived, baseUrl, useRealName, broadcast, fetchThreadName, customThreadTimeFormat, onOpenFileModal, timeFormat, useMarkdown, isReadReceiptEnabled, autoTranslateRoom, autoTranslateLanguage
 		} = this.props;
-		const username = item.alias || item.u.username;
-		const isEditing = message._id === item._id && editing;
-		const accessibilityLabel = `Message from ${ username } at ${ moment(item.ts).format(this.props.Message_TimeFormat) }, ${ this.props.item.msg }`;
+		const {
+			_id, msg, ts, attachments, urls, reactions, t, avatar, u, alias, editedBy, role, drid, dcount, dlm, tmid, tcount, tlm, tmsg, mentions, channels, unread, autoTranslate: autoTranslateMessage
+		} = item;
+
+		let message = msg;
+		// "autoTranslateRoom" and "autoTranslateLanguage" are properties from the subscription
+		// "autoTranslateMessage" is a toggle between "View Original" and "Translate" state
+		if (autoTranslateRoom && autoTranslateMessage) {
+			message = getMessageTranslation(item, autoTranslateLanguage) || message;
+		}
 
 		return (
-			<TouchableHighlight
-				onPress={() => this.onPress()}
-				onLongPress={() => this.onLongPress()}
-				disabled={this.isDeleted() || this.hasError() || archived}
-				underlayColor='#FFFFFF'
-				activeOpacity={0.3}
-				style={[styles.message, isEditing ? styles.editing : null, style]}
-				accessibilityLabel={accessibilityLabel}
-			>
-				<View style={styles.flex}>
-					{this.renderError()}
-					<View style={[this.isTemp() && { opacity: 0.3 }, styles.flex]}>
-						<Avatar
-							style={styles.avatar}
-							text={item.avatar ? '' : username}
-							size={40}
-							baseUrl={baseUrl}
-							avatar={item.avatar}
-						/>
-						<View style={[styles.content]}>
-							<User
-								onPress={this._onPress}
-								item={item}
-								Message_TimeFormat={this.props.Message_TimeFormat}
-								baseUrl={baseUrl}
-							/>
-							{this.renderMessageContent()}
-							{this.attachments()}
-							{this.renderUrl()}
-							{this.renderReactions()}
-						</View>
-					</View>
-					{this.state.reactionsModal ?
-						<ReactionsModal
-							isVisible={this.state.reactionsModal}
-							onClose={this.onClose}
-							reactions={item.reactions}
-							user={this.props.user}
-							customEmojis={customEmojis}
-						/>
-						: null
-					}
-				</View>
-			</TouchableHighlight>
+			<Message
+				id={_id}
+				msg={message}
+				author={u}
+				ts={ts}
+				type={t}
+				attachments={attachments}
+				urls={urls}
+				reactions={reactions}
+				alias={alias}
+				avatar={avatar}
+				user={user}
+				timeFormat={timeFormat}
+				customThreadTimeFormat={customThreadTimeFormat}
+				style={style}
+				archived={archived}
+				broadcast={broadcast}
+				baseUrl={baseUrl}
+				useRealName={useRealName}
+				isReadReceiptEnabled={isReadReceiptEnabled}
+				unread={unread}
+				role={role}
+				drid={drid}
+				dcount={dcount}
+				dlm={dlm}
+				tmid={tmid}
+				tcount={tcount}
+				tlm={tlm}
+				tmsg={tmsg}
+				useMarkdown={useMarkdown}
+				fetchThreadName={fetchThreadName}
+				mentions={mentions}
+				channels={channels}
+				isEdited={editedBy && !!editedBy.username}
+				isHeader={this.isHeader}
+				isThreadReply={this.isThreadReply}
+				isThreadSequential={this.isThreadSequential}
+				isInfo={this.isInfo}
+				isTemp={this.isTemp}
+				hasError={this.hasError}
+				onErrorPress={this.onErrorPress}
+				onPress={this.onPress}
+				onLongPress={this.onLongPress}
+				onReactionLongPress={this.onReactionLongPress}
+				onReactionPress={this.onReactionPress}
+				replyBroadcast={this.replyBroadcast}
+				toggleReactionPicker={this.toggleReactionPicker}
+				onDiscussionPress={this.onDiscussionPress}
+				onOpenFileModal={onOpenFileModal}
+				getCustomEmoji={getCustomEmoji}
+			/>
 		);
 	}
 }
